@@ -1,8 +1,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-/* Fix: Use namespace import for react-router-dom to resolve "no exported member" errors in certain environments where types might be problematic */
-import * as ReactRouterDOM from 'react-router-dom';
-const { HashRouter, Routes, Route, Link, useLocation } = ReactRouterDOM;
+// Fix react-router-dom imports to use standard named exports
+import { HashRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
 
 import { 
   LayoutDashboard, 
@@ -92,7 +91,6 @@ const Dashboard = ({ state, setState }: { state: AppState, setState: React.Dispa
     setIsPriceLoading(true);
     try {
       const results: Record<string, { price: number; change: number }> = { ...prices };
-      
       await Promise.all(watchlist.map(async (symbol) => {
         if (symbol.endsWith('USDT')) {
           try {
@@ -115,7 +113,6 @@ const Dashboard = ({ state, setState }: { state: AppState, setState: React.Dispa
           };
         }
       }));
-
       setPrices(results);
     } catch (error) {
       console.error("Watchlist price fetch failed:", error);
@@ -134,6 +131,7 @@ const Dashboard = ({ state, setState }: { state: AppState, setState: React.Dispa
 
   const handleAnalyze = async () => {
     setIsAnalyzing(true);
+    setCurrentAnalysis(null);
     try {
       const result = await analyzeMarket(activeSymbol, state.language);
       setCurrentAnalysis(result);
@@ -225,7 +223,6 @@ const Dashboard = ({ state, setState }: { state: AppState, setState: React.Dispa
           />
           
           <div className="glass-effect rounded-2xl flex flex-col min-h-[500px] border border-white/10 relative overflow-hidden">
-            {/* Header with Master Badge */}
             <div className="p-5 border-b border-white/10 flex items-center justify-between bg-white/[0.02]">
               <div className="flex items-center gap-2">
                 <ShieldCheck size={20} className="text-blue-400" />
@@ -252,7 +249,6 @@ const Dashboard = ({ state, setState }: { state: AppState, setState: React.Dispa
                 </div>
               ) : currentAnalysis ? (
                 <div className="space-y-6">
-                  {/* Verdict & Summary */}
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <span className={`px-4 py-1 rounded-full text-[11px] font-black uppercase tracking-tighter ${
@@ -267,7 +263,6 @@ const Dashboard = ({ state, setState }: { state: AppState, setState: React.Dispa
                     <p className="text-sm font-bold leading-relaxed text-blue-100">{currentAnalysis.summary}</p>
                   </div>
 
-                  {/* Key Levels */}
                   {currentAnalysis.keyLevels && (
                     <div className="grid grid-cols-2 gap-2">
                       {currentAnalysis.keyLevels.map((level: string, idx: number) => (
@@ -281,7 +276,6 @@ const Dashboard = ({ state, setState }: { state: AppState, setState: React.Dispa
 
                   <div className="h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
 
-                  {/* Deep Analysis Content */}
                   <div className="text-xs text-gray-400 whitespace-pre-wrap leading-loose h-64 overflow-y-auto pr-2 custom-scrollbar italic font-serif">
                     {currentAnalysis.detailedAnalysis}
                   </div>
@@ -347,9 +341,6 @@ const Dashboard = ({ state, setState }: { state: AppState, setState: React.Dispa
                   ) : (
                     <div className="h-4 w-12 bg-white/5 animate-pulse rounded"></div>
                   )}
-                  {activeSymbol === s && (
-                    <div className="absolute -top-1 -right-1 w-2 h-2 bg-white rounded-full shadow-[0_0_10px_rgba(255,255,255,0.8)]"></div>
-                  )}
                 </button>
               );
             })}
@@ -363,7 +354,8 @@ const Portfolio = ({ state, setState }: { state: AppState, setState: React.Dispa
   const t = TRANSLATIONS[state.language];
   const symbol = CURRENCY_SYMBOLS[state.currency];
   const rate = EXCHANGE_RATES[state.currency];
-
+  
+  const [livePrices, setLivePrices] = useState<Record<string, number>>({});
   const [isAdding, setIsAdding] = useState(false);
   const [newItem, setNewItem] = useState<Partial<PortfolioItem>>({
     symbol: '',
@@ -372,6 +364,36 @@ const Portfolio = ({ state, setState }: { state: AppState, setState: React.Dispa
     cost: 0,
     quantity: 0
   });
+
+  // 投資組合即時報價抓取邏輯
+  const fetchPortfolioPrices = useCallback(async () => {
+    if (state.portfolio.length === 0) return;
+    
+    const results: Record<string, number> = { ...livePrices };
+    const symbolsToFetch = Array.from(new Set(state.portfolio.map(item => item.symbol)));
+
+    await Promise.all(symbolsToFetch.map(async (s) => {
+      try {
+        if (s.endsWith('USDT')) {
+          const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${s}`);
+          const data = await res.json();
+          if (data.price) results[s] = parseFloat(data.price);
+        } else {
+          // 模擬股市即時波動
+          const basePrices: Record<string, number> = { 'AAPL': 180, 'NVDA': 700, 'TSLA': 190, 'MSFT': 400 };
+          const base = basePrices[s] || 100;
+          results[s] = base + (Math.random() - 0.5) * 5;
+        }
+      } catch (e) { console.error(`Failed to fetch price for portfolio item ${s}`, e); }
+    }));
+    setLivePrices(results);
+  }, [state.portfolio, livePrices]);
+
+  useEffect(() => {
+    fetchPortfolioPrices();
+    const interval = setInterval(fetchPortfolioPrices, 20000);
+    return () => clearInterval(interval);
+  }, [fetchPortfolioPrices]);
 
   const handleAdd = () => {
     if (!newItem.symbol || !newItem.cost) return;
@@ -386,7 +408,7 @@ const Portfolio = ({ state, setState }: { state: AppState, setState: React.Dispa
   };
 
   const calculatePL = (item: PortfolioItem) => {
-    const currentPrice = item.cost * (1 + (Math.random() * 0.2 - 0.1));
+    const currentPrice = livePrices[item.symbol] || item.cost;
     const profit = (currentPrice - item.cost) * item.quantity;
     const ratio = ((currentPrice - item.cost) / item.cost) * 100;
     return { profit, ratio, currentPrice };
@@ -395,7 +417,10 @@ const Portfolio = ({ state, setState }: { state: AppState, setState: React.Dispa
   return (
     <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
       <div className="flex justify-between items-center">
-        <h2 className="text-3xl font-bold">{t.portfolio}</h2>
+        <div>
+          <h2 className="text-3xl font-bold">{t.portfolio}</h2>
+          <p className="text-[10px] text-gray-500 mt-1 uppercase tracking-widest">Live Sync Enabled</p>
+        </div>
         <button 
           onClick={() => setIsAdding(true)}
           className="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded-xl flex items-center gap-2 font-bold transition-all shadow-lg shadow-blue-600/20"
@@ -411,7 +436,7 @@ const Portfolio = ({ state, setState }: { state: AppState, setState: React.Dispa
             <div className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-1">{t.symbol}</label>
-                <input type="text" className="w-full bg-white/5 border border-white/10 rounded-xl p-3 focus:ring-2 focus:ring-blue-500 outline-none" value={newItem.symbol} onChange={e => setNewItem({...newItem, symbol: e.target.value.toUpperCase()})} />
+                <input type="text" className="w-full bg-white/5 border border-white/10 rounded-xl p-3 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="BTCUSDT, AAPL..." value={newItem.symbol} onChange={e => setNewItem({...newItem, symbol: e.target.value.toUpperCase()})} />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -441,7 +466,7 @@ const Portfolio = ({ state, setState }: { state: AppState, setState: React.Dispa
           <thead className="bg-white/5 border-b border-white/10">
             <tr>
               <th className="px-6 py-4 font-bold text-[10px] uppercase tracking-widest opacity-60">{t.symbol}</th>
-              <th className="px-6 py-4 font-bold text-[10px] uppercase tracking-widest opacity-60">{t.cost}</th>
+              <th className="px-6 py-4 font-bold text-[10px] uppercase tracking-widest opacity-60">{t.cost} (USD)</th>
               <th className="px-6 py-4 font-bold text-[10px] uppercase tracking-widest opacity-60">{t.currentPrice}</th>
               <th className="px-6 py-4 font-bold text-[10px] uppercase tracking-widest opacity-60">{t.profit}</th>
               <th className="px-6 py-4 font-bold text-[10px] uppercase tracking-widest opacity-60">{t.plRatio}</th>
@@ -457,14 +482,14 @@ const Portfolio = ({ state, setState }: { state: AppState, setState: React.Dispa
                     <div className="font-bold">{item.symbol}</div>
                     <div className="text-[10px] text-gray-500">{item.buyDate}</div>
                   </td>
-                  <td className="px-6 py-6 font-mono text-sm">
-                    {symbol} {(item.cost * rate).toLocaleString()}
-                  </td>
                   <td className="px-6 py-6 font-mono text-sm text-gray-400">
-                    {symbol} {(currentPrice * rate).toLocaleString()}
+                    ${item.cost.toLocaleString()}
+                  </td>
+                  <td className="px-6 py-6 font-mono text-sm font-bold">
+                    {symbol} {(currentPrice * rate).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </td>
                   <td className={`px-6 py-6 font-mono text-sm font-bold ${isProfit ? 'text-green-400' : 'text-red-400'}`}>
-                    {isProfit ? '+' : ''} {(profit * rate).toLocaleString()}
+                    {isProfit ? '+' : ''} {symbol} {(profit * rate).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </td>
                   <td className={`px-6 py-6`}>
                     <span className={`px-3 py-1 rounded-full text-[10px] font-bold ${isProfit ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>

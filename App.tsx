@@ -24,13 +24,15 @@ import {
   Trash2,
   X,
   Clock,
-  Gauge
+  Gauge,
+  RefreshCw,
+  AlertCircle
 } from 'lucide-react';
 import { AppState, Language, Currency, PortfolioItem, AnalysisHistory } from './types';
 import { TRANSLATIONS, CURRENCY_SYMBOLS, EXCHANGE_RATES } from './constants';
 import TradingViewWidget from './components/TradingViewWidget';
 import FearGreedIndex from './components/FearGreedIndex';
-import { analyzeMarket, getChatResponse, getFearGreedIndices } from './services/geminiService';
+import { analyzeMarket, getChatResponseStream, getFearGreedIndices } from './services/geminiService';
 
 const STOCK_BASE_PRICES: Record<string, number> = {
   'AAPL': 231.54,
@@ -136,14 +138,20 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
   const [activeSymbol, setActiveSymbol] = useState(state.watchlist[0]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isFetchingFNG, setIsFetchingFNG] = useState(false);
+  const [fngError, setFngError] = useState(false);
   const [messages, setMessages] = useState<{role: 'user' | 'model', text: string, sources?: any[]}[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [prices, setPrices] = useState<Record<string, { price: number; change: number }>>({});
   const [marketOpen, setMarketOpen] = useState(isUSMarketOpen());
   
-  // 初始值設為 null 以觸發 Loading 狀態，防止顯示錯誤的預設值 50
-  const [stockSentiment, setStockSentiment] = useState<{score: number, label: string} | null>(null);
-  const [cryptoSentiment, setCryptoSentiment] = useState<{score: number, label: string} | null>(null);
+  const [stockSentiment, setStockSentiment] = useState<{score: number, label: string} | null>(() => {
+    const cached = localStorage.getItem('cache_fng_stock');
+    return cached ? JSON.parse(cached) : null;
+  });
+  const [cryptoSentiment, setCryptoSentiment] = useState<{score: number, label: string} | null>(() => {
+    const cached = localStorage.getItem('cache_fng_crypto');
+    return cached ? JSON.parse(cached) : null;
+  });
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const t = TRANSLATIONS[state.language];
@@ -151,25 +159,35 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
   const fetchFearGreedData = useCallback(async () => {
+    if (isFetchingFNG) return;
     setIsFetchingFNG(true);
+    setFngError(false);
     try {
       const results = await getFearGreedIndices(state.language);
       if (results) {
-        if (results.stock) setStockSentiment(results.stock);
-        if (results.crypto) setCryptoSentiment(results.crypto);
+        if (results.stock) {
+          setStockSentiment(results.stock);
+          localStorage.setItem('cache_fng_stock', JSON.stringify(results.stock));
+        }
+        if (results.crypto) {
+          setCryptoSentiment(results.crypto);
+          localStorage.setItem('cache_fng_crypto', JSON.stringify(results.crypto));
+        }
       }
     } catch (e) {
-      console.error("F&G Update Error", e);
+      setFngError(true);
     } finally {
       setIsFetchingFNG(false);
     }
-  }, [state.language]);
+  }, [state.language, isFetchingFNG]);
 
   useEffect(() => {
-    fetchFearGreedData();
-    const interval = setInterval(fetchFearGreedData, 3600000);
+    if (!stockSentiment || !cryptoSentiment) {
+      fetchFearGreedData();
+    }
+    const interval = setInterval(fetchFearGreedData, 3600000); 
     return () => clearInterval(interval);
-  }, [fetchFearGreedData]);
+  }, [fetchFearGreedData, stockSentiment, cryptoSentiment]);
 
   const fetchAllPrices = useCallback(async () => {
     const isCurrentlyOpen = isUSMarketOpen();
@@ -222,10 +240,27 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
     if (!inputValue.trim() || isAnalyzing) return;
     const userMsg = inputValue.trim();
     setInputValue('');
-    setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
+    
+    // 立即顯示用戶訊息並建立一個空的模型訊息用於串流
+    setMessages(prev => [
+      ...prev, 
+      { role: 'user', text: userMsg },
+      { role: 'model', text: "" } 
+    ]);
+    
     setIsAnalyzing(true);
-    const result = await getChatResponse(activeSymbol, messages, userMsg, state.language);
-    setMessages(prev => [...prev, { role: 'model', text: result.text, sources: result.sources }]);
+    
+    // 使用串流 API
+    await getChatResponseStream(activeSymbol, messages, userMsg, state.language, (streamedText) => {
+      setMessages(prev => {
+        const newMessages = [...prev];
+        if (newMessages.length > 0) {
+          newMessages[newMessages.length - 1].text = streamedText;
+        }
+        return newMessages;
+      });
+    });
+    
     setIsAnalyzing(false);
   };
 
@@ -271,27 +306,45 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
 
         <div className="space-y-6">
           <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2 relative">
+            <div className="space-y-2 relative group">
               <div className="flex items-center justify-between px-1">
-                <h3 className="text-[9px] font-bold opacity-60 uppercase tracking-tighter">US Stock (CNN)</h3>
-                <Gauge size={10} className="opacity-40" />
+                <div className="flex items-center gap-1">
+                  <h3 className="text-[9px] font-bold opacity-60 uppercase tracking-tighter">US Stock (CNN)</h3>
+                  {fngError && <AlertCircle size={8} className="text-red-500 animate-pulse" />}
+                </div>
+                <button 
+                  onClick={fetchFearGreedData} 
+                  disabled={isFetchingFNG}
+                  className={`p-1 hover:bg-white/10 rounded transition-colors ${isFetchingFNG ? 'animate-spin' : ''}`}
+                >
+                  <RefreshCw size={10} className="opacity-40" />
+                </button>
               </div>
               <FearGreedIndex 
                 value={stockSentiment?.score ?? 0} 
-                label={stockSentiment?.label ?? 'Loading...'} 
-                isAnalyzing={isFetchingFNG || !stockSentiment} 
+                label={stockSentiment?.label ?? (fngError ? 'Fetch Failed' : 'Loading...')} 
+                isAnalyzing={isFetchingFNG} 
                 compact 
               />
             </div>
-            <div className="space-y-2 relative">
+            <div className="space-y-2 relative group">
               <div className="flex items-center justify-between px-1">
-                <h3 className="text-[9px] font-bold opacity-60 uppercase tracking-tighter">Crypto (Coinglass)</h3>
-                <Zap size={10} className="opacity-40" />
+                <div className="flex items-center gap-1">
+                  <h3 className="text-[9px] font-bold opacity-60 uppercase tracking-tighter">Crypto (Coinglass)</h3>
+                  {fngError && <AlertCircle size={8} className="text-red-500 animate-pulse" />}
+                </div>
+                <button 
+                  onClick={fetchFearGreedData} 
+                  disabled={isFetchingFNG}
+                  className={`p-1 hover:bg-white/10 rounded transition-colors ${isFetchingFNG ? 'animate-spin' : ''}`}
+                >
+                  <RefreshCw size={10} className="opacity-40" />
+                </button>
               </div>
               <FearGreedIndex 
                 value={cryptoSentiment?.score ?? 0} 
-                label={cryptoSentiment?.label ?? 'Loading...'} 
-                isAnalyzing={isFetchingFNG || !cryptoSentiment} 
+                label={cryptoSentiment?.label ?? (fngError ? 'Fetch Failed' : 'Loading...')} 
+                isAnalyzing={isFetchingFNG} 
                 compact 
               />
             </div>
@@ -308,15 +361,27 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
               ) : (
                 messages.map((m, i) => (
                   <div key={i} className={`flex flex-col gap-2 ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
-                    <div className={`max-w-[90%] rounded-2xl p-3 text-xs leading-relaxed ${m.role === 'user' ? 'bg-blue-600 text-white rounded-br-none' : 'bg-white/5 border border-white/10 text-gray-200 rounded-bl-none italic font-serif shadow-inner'}`}>
-                      <div className="flex items-center gap-2 mb-1 opacity-60">{m.role === 'user' ? <User size={10} /> : <Bot size={10} />}<span className="text-[9px] font-bold uppercase">{m.role === 'user' ? 'Investor' : 'Master Analyst'}</span></div>
-                      {m.text}
-                      {m.sources && m.sources.length > 0 && <div className="mt-3 pt-3 border-t border-white/10 space-y-1">{m.sources.map((s, idx) => (<a key={idx} href={s.uri} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-[10px] text-blue-400 hover:text-blue-300"><ExternalLink size={10} /><span className="truncate max-w-[180px]">{s.title}</span></a>))}</div>}
-                    </div>
+                    {m.text && (
+                      <div className={`max-w-[90%] rounded-2xl p-3 text-xs leading-relaxed ${m.role === 'user' ? 'bg-blue-600 text-white rounded-br-none' : 'bg-white/5 border border-white/10 text-gray-200 rounded-bl-none italic font-serif shadow-inner'}`}>
+                        <div className="flex items-center gap-2 mb-1 opacity-60">{m.role === 'user' ? <User size={10} /> : <Bot size={10} />}<span className="text-[9px] font-bold uppercase">{m.role === 'user' ? 'Investor' : 'Master Analyst'}</span></div>
+                        {m.text}
+                        {m.sources && m.sources.length > 0 && <div className="mt-3 pt-3 border-t border-white/10 space-y-1">{m.sources.map((s, idx) => (<a key={idx} href={s.uri} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-[10px] text-blue-400 hover:text-blue-300"><ExternalLink size={10} /><span className="truncate max-w-[180px]">{s.title}</span></a>))}</div>}
+                      </div>
+                    )}
                   </div>
                 ))
               )}
-              {isAnalyzing && <div className="flex justify-start"><div className="bg-white/5 border border-white/10 rounded-2xl p-3 flex items-center gap-2"><div className="flex gap-1 animate-pulse"><div className="w-1 h-1 bg-blue-400 rounded-full"></div><div className="w-1 h-1 bg-blue-400 rounded-full"></div><div className="w-1 h-1 bg-blue-400 rounded-full"></div></div></div></div>}
+              {isAnalyzing && messages.length > 0 && !messages[messages.length-1].text && (
+                <div className="flex justify-start">
+                  <div className="bg-white/5 border border-white/10 rounded-2xl p-3 flex items-center gap-2">
+                    <div className="flex gap-1 animate-bounce">
+                      <div className="w-1 h-1 bg-blue-400 rounded-full"></div>
+                      <div className="w-1 h-1 bg-blue-400 rounded-full" style={{animationDelay: '0.2s'}}></div>
+                      <div className="w-1 h-1 bg-blue-400 rounded-full" style={{animationDelay: '0.4s'}}></div>
+                    </div>
+                  </div>
+                </div>
+              )}
               <div ref={chatEndRef} />
             </div>
             <form onSubmit={handleSendMessage} className="p-3 bg-white/[0.02] border-t border-white/10 flex gap-2">

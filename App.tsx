@@ -121,7 +121,7 @@ const Sidebar = memo(({ language }: { language: Language }) => {
           );
         })}
       </nav>
-      <div className="mt-auto p-4 glass-effect rounded-2xl text-[10px] text-gray-500 uppercase tracking-[0.2em] text-center border border-white/5">Master Engine v3.3 Stable</div>
+      <div className="mt-auto p-4 glass-effect rounded-2xl text-[10px] text-gray-500 uppercase tracking-[0.2em] text-center border border-white/5">Master Engine v3.4 Stable</div>
     </div>
   );
 });
@@ -212,19 +212,20 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
   const handleDeepAnalysis = async () => {
     if (isAnalyzing) return;
     setIsAnalyzing(true);
-    const loadingMsg = state.language === 'zh-TW' ? "正在調用大師智庫進行深度市場分析..." : "Analyzing market with Master AI...";
-    setMessages([{ role: 'model', text: loadingMsg }]); 
+    const initialText = state.language === 'zh-TW' ? "正在調用金融模型進行深度分析..." : "Analyzing market data...";
+    
+    // 先清空之前對話或加入一條系統訊息
+    setMessages([{ role: 'model', text: initialText }]);
+    
     try {
       const result = await analyzeMarket(activeSymbol, state.language);
       if (result) {
-        const report = `【深度大師報告：${activeSymbol}】\n決策建議：${result.recommendation}\n市場評價：${result.summary}\n支撐壓力：${result.keyLevels.join(' | ')}\n\n詳細見解：\n${result.detailedAnalysis}`;
+        const report = `【金融大師報告：${activeSymbol}】\n投資建議：${result.recommendation}\n摘要：${result.summary}\n技術位：${result.keyLevels.join(' | ')}\n\n深度分析：\n${result.detailedAnalysis}`;
         setMessages([{ role: 'model', text: report }]);
         setState(prev => ({ ...prev, history: [{ id: Date.now().toString(), symbol: activeSymbol, timestamp: Date.now(), ...result }, ...prev.history].slice(0, 50) }));
-      } else {
-        setMessages([{ role: 'model', text: "連線異常，大師目前無法接收信號。" }]);
       }
-    } catch(e) {
-      setMessages([{ role: 'model', text: "分析失敗，可能是 API 次數限制或代碼無效。" }]);
+    } catch(e: any) {
+      setMessages([{ role: 'model', text: `分析發生錯誤：${e.message}` }]);
     } finally { setIsAnalyzing(false); }
   };
 
@@ -234,10 +235,10 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
     const userMsg = inputValue.trim();
     setInputValue('');
     
-    // 取出之前的有效對話歷史
-    const history = [...messages];
+    // 記錄發送前的歷史，用於 API 呼叫
+    const currentHistory = [...messages];
     
-    // 即時在 UI 加入 user 訊息與空的 model 訊息
+    // UI 立即更新：加入 User 訊息和一個空的 Model 訊息
     setMessages(prev => [
       ...prev, 
       { role: 'user', text: userMsg },
@@ -246,7 +247,7 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
     
     setIsAnalyzing(true);
     try {
-      await getChatResponseStream(activeSymbol, history, userMsg, state.language, (streamedText) => {
+      await getChatResponseStream(activeSymbol, currentHistory, userMsg, state.language, (streamedText) => {
         setMessages(prev => {
           const updated = [...prev];
           if (updated.length > 0) {
@@ -255,15 +256,19 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
           return updated;
         });
       });
-    } catch (error) {
-      console.error("Stream Fatal Error:", error);
+    } catch (error: any) {
+      setMessages(prev => {
+        const updated = [...prev];
+        if (updated.length > 0) updated[updated.length - 1].text = `連線失敗：${error.message}`;
+        return updated;
+      });
     } finally {
       setIsAnalyzing(false);
     }
   };
 
-  const renderAnalyst = (isFull = false) => (
-    <div className={`glass-effect rounded-2xl flex flex-col border border-white/10 relative overflow-hidden shadow-2xl transition-all duration-300 ${isFull ? 'fixed inset-4 md:inset-10 z-[100] bg-[#0c0c0c]' : 'h-[450px]'}`}>
+  const renderAnalystBox = (isFull = false) => (
+    <div className={`glass-effect rounded-2xl flex flex-col border border-white/10 relative overflow-hidden shadow-2xl transition-all duration-300 ${isFull ? 'fixed inset-4 md:inset-10 z-[100] bg-[#0c0c0c]/98 ring-2 ring-blue-500/20' : 'h-[480px]'}`}>
       <div className="p-4 border-b border-white/10 flex items-center justify-between bg-white/[0.04]">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-full bg-blue-600/20 flex items-center justify-center border border-blue-500/30">
@@ -271,7 +276,7 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
           </div>
           <div>
             <h3 className="text-sm font-bold tracking-wide uppercase">{t.aiAnalyst}</h3>
-            <span className="text-[8px] text-blue-500 font-mono tracking-widest uppercase animate-pulse">Master Engine v3.3 Stable</span>
+            <span className="text-[8px] text-blue-500 font-mono tracking-widest uppercase animate-pulse">Master Engine v3.4 Stable</span>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -288,22 +293,23 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
       
       <div className="flex-1 p-5 overflow-y-auto custom-scrollbar space-y-5 bg-[#0e0e0e]/50">
         {messages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center opacity-30">
-            <Bot size={56} className="mb-4 text-gray-400" />
-            <p className="text-base font-bold text-white">大師智庫已連線</p>
+          <div className="flex flex-col items-center justify-center h-full text-center opacity-40">
+            <Bot size={56} className="mb-4 text-blue-400/50" />
+            <p className="text-base font-bold text-white">大師智庫已就緒</p>
             <p className="text-[11px] mt-2 leading-relaxed px-10">
-              您可以詢問有關市場的任何問題，例如：「${activeSymbol} 現在的支撐位在哪？」<br/>或是點擊「AI 深度分析」產生完整投資報告。
+              您可以詢問任何關於市場的見解，或是點擊「AI 深度分析」獲取完整投資建議。<br/>
+              (注意：如果完全沒有回應，請檢查設定中的 API 配置)
             </p>
           </div>
         ) : (
           messages.map((m, i) => (
             <div key={i} className={`flex flex-col gap-2 ${m.role === 'user' ? 'items-end' : 'items-start'} animate-in fade-in slide-in-from-bottom-2`}>
-              <div className={`max-w-[88%] rounded-2xl px-5 py-4 text-[13px] leading-relaxed shadow-xl ${m.role === 'user' ? 'bg-blue-600 text-white rounded-br-none' : 'bg-white/5 border border-white/10 text-gray-200 rounded-bl-none font-medium'}`}>
+              <div className={`max-w-[90%] rounded-2xl px-5 py-4 text-[13px] leading-relaxed shadow-xl ${m.role === 'user' ? 'bg-blue-600 text-white rounded-br-none' : 'bg-white/5 border border-white/10 text-gray-200 rounded-bl-none font-medium'}`}>
                 <div className="flex items-center gap-2 mb-2 opacity-50 text-[9px] font-black tracking-widest uppercase border-b border-white/5 pb-1">
                   {m.role === 'user' ? <User size={10} /> : <Bot size={10} />}
                   <span>{m.role === 'user' ? 'Investor' : 'AI MASTER'}</span>
                 </div>
-                <div className="whitespace-pre-wrap font-sans">{m.text || (isAnalyzing && i === messages.length - 1 ? "正在連線智庫核心..." : "")}</div>
+                <div className="whitespace-pre-wrap font-sans">{m.text || (isAnalyzing && i === messages.length - 1 ? "正在連線智庫核心並分析數據..." : "")}</div>
               </div>
             </div>
           ))
@@ -316,14 +322,14 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
           type="text" 
           value={inputValue} 
           onChange={e => setInputValue(e.target.value)} 
-          placeholder="在此詢問大師市場見解..." 
-          className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 transition-all placeholder:text-gray-600" 
+          placeholder="在這裡輸入問題，例如：現在買入 NVDA 合適嗎？" 
+          className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-5 py-4 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 transition-all placeholder:text-gray-600" 
           disabled={isAnalyzing} 
         />
         <button 
           type="submit" 
           disabled={!inputValue.trim() || isAnalyzing} 
-          className="bg-blue-600 text-white px-5 rounded-2xl transition-all active:scale-95 hover:bg-blue-700 shadow-xl disabled:opacity-30 disabled:cursor-not-allowed"
+          className="bg-blue-600 text-white px-5 rounded-2xl transition-all active:scale-95 hover:bg-blue-700 shadow-xl disabled:opacity-30"
         >
           <Send size={18} />
         </button>
@@ -373,25 +379,25 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
                 <h3 className="text-[9px] font-bold opacity-60 uppercase tracking-tighter">US Stocks F&G</h3>
                 <button onClick={() => fetchFearGreedData()} disabled={isFetchingFNG} className={`p-1 hover:bg-white/10 rounded transition-colors ${isFetchingFNG ? 'animate-spin' : ''}`}><RefreshCw size={10} className="opacity-40" /></button>
               </div>
-              <FearGreedIndex value={stockSentiment?.score ?? 50} label={isFetchingFNG ? 'Updating...' : (stockSentiment?.label ?? 'Neutral')} isAnalyzing={isFetchingFNG} compact />
+              <FearGreedIndex value={stockSentiment?.score ?? 50} label={isFetchingFNG ? 'Estimating...' : (stockSentiment?.label ?? 'Neutral')} isAnalyzing={isFetchingFNG} compact />
             </div>
             <div className="space-y-2 relative group">
               <div className="flex items-center justify-between px-1">
                 <h3 className="text-[9px] font-bold opacity-60 uppercase tracking-tighter">Crypto F&G</h3>
                 <button onClick={() => fetchFearGreedData()} disabled={isFetchingFNG} className={`p-1 hover:bg-white/10 rounded transition-colors ${isFetchingFNG ? 'animate-spin' : ''}`}><RefreshCw size={10} className="opacity-40" /></button>
               </div>
-              <FearGreedIndex value={cryptoSentiment?.score ?? 50} label={isFetchingFNG ? 'Updating...' : (cryptoSentiment?.label ?? 'Neutral')} isAnalyzing={isFetchingFNG} compact />
+              <FearGreedIndex value={cryptoSentiment?.score ?? 50} label={isFetchingFNG ? 'Estimating...' : (cryptoSentiment?.label ?? 'Neutral')} isAnalyzing={isFetchingFNG} compact />
             </div>
           </div>
           
-          {renderAnalyst(false)}
+          {renderAnalystBox(false)}
         </div>
       </div>
 
       {isMaximized && (
         <div className="fixed inset-0 z-[110] bg-black/95 backdrop-blur-xl animate-in fade-in duration-500 flex items-center justify-center">
            <div className="w-full max-w-5xl px-4 h-[90vh]">
-             {renderAnalyst(true)}
+             {renderAnalystBox(true)}
            </div>
            <div className="fixed top-6 right-6 z-[120]">
              <button onClick={() => setIsMaximized(false)} className="p-4 bg-white/10 hover:bg-red-500 text-white rounded-full transition-all shadow-2xl active:scale-90 border border-white/10">

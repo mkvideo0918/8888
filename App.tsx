@@ -107,7 +107,7 @@ const Sidebar = memo(({ language }: { language: Language }) => {
         <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-lg flex items-center justify-center shadow-lg shadow-blue-600/20">
           <TrendingUp className="w-6 h-6 text-white" />
         </div>
-        <h1 className="text-xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400">WealthWise</h1>
+        <h1 className="text-xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-r from-white to-gray-400">WealthWise</h1>
       </div>
       <nav className="flex-1 space-y-2">
         {menuItems.map((item) => {
@@ -121,7 +121,7 @@ const Sidebar = memo(({ language }: { language: Language }) => {
           );
         })}
       </nav>
-      <div className="mt-auto p-4 glass-effect rounded-2xl text-[10px] text-gray-500 uppercase tracking-[0.2em] text-center border border-white/5">Master Engine v3.1</div>
+      <div className="mt-auto p-4 glass-effect rounded-2xl text-[10px] text-gray-500 uppercase tracking-[0.2em] text-center border border-white/5">Master Engine v3.2</div>
     </div>
   );
 });
@@ -131,8 +131,7 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
   const [isFetchingFNG, setIsFetchingFNG] = useState(false);
-  const [fngError, setFngError] = useState(false);
-  const [messages, setMessages] = useState<{role: 'user' | 'model', text: string, sources?: any[]}[]>([]);
+  const [messages, setMessages] = useState<{role: 'user' | 'model', text: string}[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [prices, setPrices] = useState<Record<string, { price: number; change: number }>>({});
   const [marketOpen, setMarketOpen] = useState(isUSMarketOpen());
@@ -150,36 +149,26 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
   const t = TRANSLATIONS[state.language];
 
   useEffect(() => { 
-    if (messages.length > 0) {
-      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); 
-    }
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); 
   }, [messages, isAnalyzing]);
 
-  const fetchFearGreedData = useCallback(async (retryCount = 0) => {
-    if (isFetchingFNG && retryCount === 0) return;
+  const fetchFearGreedData = useCallback(async () => {
+    if (isFetchingFNG) return;
     setIsFetchingFNG(true);
     try {
       const results = await getFearGreedIndices(state.language);
-      if (results && results.stock && results.crypto) {
+      if (results) {
         setStockSentiment(results.stock);
         setCryptoSentiment(results.crypto);
         localStorage.setItem('cache_fng_stock', JSON.stringify(results.stock));
         localStorage.setItem('cache_fng_crypto', JSON.stringify(results.crypto));
-        setFngError(false);
-      } else {
-        throw new Error("Invalid format");
       }
     } catch (e) {
-      console.warn("F&G error, retrying...", e);
-      if (retryCount < 1) {
-        setTimeout(() => fetchFearGreedData(retryCount + 1), 3000);
-      } else {
-        setFngError(true);
-      }
+      console.warn("F&G Error", e);
     } finally {
       setIsFetchingFNG(false);
     }
-  }, [state.language, isFetchingFNG]);
+  }, [state.language]);
 
   useEffect(() => {
     fetchFearGreedData();
@@ -223,18 +212,18 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
   const handleDeepAnalysis = async () => {
     if (isAnalyzing) return;
     setIsAnalyzing(true);
-    setMessages([{ role: 'model', text: "" }]); 
+    setMessages([{ role: 'model', text: "大師正在透過雲端分析市場趨勢與技術點位..." }]); 
     try {
       const result = await analyzeMarket(activeSymbol, state.language);
       if (result) {
-        const report = `【大師深度分析：${activeSymbol}】\n\n建議：${result.recommendation}\n綜合評價：${result.summary}\n技術點位：${result.keyLevels.join(', ')}\n\n詳細分析：\n${result.detailedAnalysis}`;
-        setMessages([{ role: 'model', text: report, sources: result.sources }]);
+        const report = `【深度報告：${activeSymbol}】\n決策：${result.recommendation}\n理由：${result.summary}\n支撐/壓力：${result.keyLevels.join(', ')}\n\n詳情：${result.detailedAnalysis}`;
+        setMessages([{ role: 'model', text: report }]);
         setState(prev => ({ ...prev, history: [{ id: Date.now().toString(), symbol: activeSymbol, timestamp: Date.now(), ...result }, ...prev.history].slice(0, 50) }));
       } else {
-        setMessages([{ role: 'model', text: "大師目前連線中斷，請確認網路或 API 配置。" }]);
+        setMessages([{ role: 'model', text: "大師目前無法連線，請檢查 API Key 或網路狀態。" }]);
       }
     } catch(e) {
-      setMessages([{ role: 'model', text: "分析失敗，可能是因為 API 限制或網路錯誤。" }]);
+      setMessages([{ role: 'model', text: "分析失敗，請確認代碼是否正確。" }]);
     } finally { setIsAnalyzing(false); }
   };
 
@@ -244,7 +233,8 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
     const userMsg = inputValue.trim();
     setInputValue('');
     
-    const validHistory = messages.filter(m => m.text);
+    // 只發送有內容的歷史
+    const history = messages.filter(m => m.text && m.text.length > 5);
     
     setMessages(prev => [
       ...prev, 
@@ -253,82 +243,61 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
     ]);
     
     setIsAnalyzing(true);
-    
     try {
-      await getChatResponseStream(activeSymbol, validHistory, userMsg, state.language, (streamedText) => {
+      await getChatResponseStream(activeSymbol, history, userMsg, state.language, (text) => {
         setMessages(prev => {
-          const newMessages = [...prev];
-          if (newMessages.length > 0) {
-            newMessages[newMessages.length - 1].text = streamedText;
-          }
-          return newMessages;
+          const updated = [...prev];
+          if (updated.length > 0) updated[updated.length - 1].text = text;
+          return updated;
         });
       });
     } catch (error) {
-       console.error("Stream failed", error);
+      console.error("Stream Error", error);
     } finally {
       setIsAnalyzing(false);
     }
   };
 
-  const renderAIAnalystBox = (fullScreen = false) => (
-    <div className={`glass-effect rounded-2xl flex flex-col border border-white/10 relative overflow-hidden shadow-2xl transition-all duration-300 ${fullScreen ? 'fixed inset-6 md:inset-10 lg:inset-20 z-[100] bg-neutral-950/98 ring-2 ring-blue-500/30' : 'h-[400px]'}`}>
-      <div className="p-4 border-b border-white/10 flex items-center justify-between bg-white/[0.04]">
+  const renderAnalyst = (isFull = false) => (
+    <div className={`glass-effect rounded-2xl flex flex-col border border-white/10 relative overflow-hidden shadow-2xl transition-all duration-300 ${isFull ? 'fixed inset-4 md:inset-10 z-[100] bg-neutral-950/98' : 'h-[400px]'}`}>
+      <div className="p-4 border-b border-white/10 flex items-center justify-between bg-white/[0.03]">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center border border-blue-400/30 shadow-inner">
+          <div className="w-8 h-8 rounded-full bg-blue-600/20 flex items-center justify-center border border-blue-500/30">
             <Bot size={18} className="text-blue-400" />
           </div>
           <div>
             <h3 className="text-sm font-bold tracking-wide uppercase">{t.aiAnalyst}</h3>
-            <span className="text-[8px] text-blue-500 font-mono tracking-widest uppercase animate-pulse">Master Engine v3.1</span>
+            <span className="text-[8px] text-blue-500 font-mono tracking-widest uppercase animate-pulse">Master Engine v3.2</span>
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          <button 
-            onClick={() => setIsMaximized(!isMaximized)} 
-            className="p-2 hover:bg-white/10 rounded-xl text-gray-400 hover:text-white transition-all active:scale-90"
-          >
-            {isMaximized ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
-          </button>
-          {!fullScreen && (
-            <button 
-              onClick={handleDeepAnalysis} 
-              disabled={isAnalyzing} 
-              className="text-[10px] bg-blue-600 text-white px-4 py-1.5 rounded-full hover:bg-blue-700 transition-all font-bold flex items-center gap-2 shadow-lg disabled:opacity-50"
-            >
-              {isAnalyzing ? <Loader2 size={12} className="animate-spin" /> : <Zap size={12} />} {t.analyze}
-            </button>
-          )}
+        <div className="flex items-center gap-2">
+           <button onClick={() => setIsMaximized(!isMaximized)} className="p-2 hover:bg-white/10 rounded-lg text-gray-400 hover:text-white transition-all">
+             {isMaximized ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+           </button>
+           {!isFull && (
+             <button onClick={handleDeepAnalysis} disabled={isAnalyzing} className="text-[10px] bg-blue-600 text-white px-4 py-1.5 rounded-full hover:bg-blue-700 transition-all font-bold flex items-center gap-2 shadow-lg disabled:opacity-50">
+               {isAnalyzing ? <Loader2 size={12} className="animate-spin" /> : <Zap size={12} />} {t.analyze}
+             </button>
+           )}
         </div>
       </div>
       
-      <div className="flex-1 p-5 overflow-y-auto custom-scrollbar space-y-6">
+      <div className="flex-1 p-5 overflow-y-auto custom-scrollbar space-y-4">
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center opacity-30">
-            <Bot size={64} className="mb-6 text-gray-400" />
-            <p className="text-lg font-bold text-gray-200">AI 大師分析已就緒</p>
-            <p className="text-xs mt-3 leading-relaxed max-w-xs text-blue-400">目前使用快速穩定的 Gemini 3 Flash 模型</p>
+            <Bot size={64} className="mb-4 text-gray-500" />
+            <p className="text-base font-bold">大師已上線，隨時待命</p>
+            <p className="text-[11px] mt-2 leading-relaxed">輸入您的問題（如：${activeSymbol} 現在可以買嗎？）或點擊「AI 深度分析」獲取完整報告。</p>
           </div>
         ) : (
           messages.map((m, i) => (
             <div key={i} className={`flex flex-col gap-2 ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
-              <div className={`max-w-[90%] md:max-w-[80%] rounded-2xl px-5 py-4 text-sm leading-relaxed shadow-xl ${m.role === 'user' ? 'bg-blue-600 text-white rounded-br-none' : 'bg-white/5 border border-white/10 text-gray-200 rounded-bl-none font-medium'}`}>
-                <div className="flex items-center gap-2 mb-2 opacity-50 border-b border-white/5 pb-1 text-[9px] font-black tracking-widest uppercase">
-                  {m.role === 'user' ? <User size={12} /> : <Bot size={12} />}
+              <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-[13px] leading-relaxed shadow-lg ${m.role === 'user' ? 'bg-blue-600 text-white rounded-br-none' : 'bg-white/5 border border-white/10 text-gray-200 rounded-bl-none font-medium'}`}>
+                <div className="flex items-center gap-2 mb-1 opacity-50 text-[9px] font-black tracking-widest uppercase border-b border-white/5 pb-1">
+                  {m.role === 'user' ? <User size={10} /> : <Bot size={10} />}
                   <span>{m.role === 'user' ? 'Investor' : 'AI MASTER'}</span>
                 </div>
-                <div className="whitespace-pre-wrap">{m.text || (isAnalyzing && i === messages.length - 1 ? "正在連線大師分析引擎..." : "")}</div>
-                {m.sources && m.sources.length > 0 && (
-                  <div className="mt-5 pt-3 border-t border-white/10 grid grid-cols-1 gap-2">
-                    <span className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">Grounding Sources:</span>
-                    {m.sources.map((s, idx) => (
-                      <a key={idx} href={s.uri} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-[11px] text-blue-400 hover:text-blue-300 transition-colors py-1.5 bg-white/5 rounded-lg px-3 group">
-                        <ExternalLink size={12} className="group-hover:translate-x-0.5 transition-transform" />
-                        <span className="truncate">{s.title}</span>
-                      </a>
-                    ))}
-                  </div>
-                )}
+                <div className="whitespace-pre-wrap">{m.text || (isAnalyzing && i === messages.length - 1 ? "正在連線智庫..." : "")}</div>
               </div>
             </div>
           ))
@@ -362,7 +331,7 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
         <div className="lg:col-span-2 space-y-6">
           <div className="flex items-center justify-between bg-white/[0.02] p-4 rounded-2xl border border-white/5 relative group">
             <div className="absolute -top-3 left-4 bg-blue-600 text-[8px] font-black uppercase tracking-widest px-3 py-1 rounded border border-blue-400 shadow-xl z-10 flex items-center gap-1">
-              <ExternalLink size={8} /> TradingView LIVE
+              <ExternalLink size={8} /> TradingView Connection
             </div>
             <div className="flex flex-col">
               <div className="flex items-center gap-2">
@@ -398,24 +367,24 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
                 <h3 className="text-[9px] font-bold opacity-60 uppercase tracking-tighter">US Stocks F&G</h3>
                 <button onClick={() => fetchFearGreedData()} disabled={isFetchingFNG} className={`p-1 hover:bg-white/10 rounded transition-colors ${isFetchingFNG ? 'animate-spin' : ''}`}><RefreshCw size={10} className="opacity-40" /></button>
               </div>
-              <FearGreedIndex value={stockSentiment?.score ?? 50} label={isFetchingFNG && !stockSentiment ? 'Loading...' : (stockSentiment?.label ?? (fngError ? 'Fetch Error' : 'Neutral'))} isAnalyzing={isFetchingFNG} compact />
+              <FearGreedIndex value={stockSentiment?.score ?? 50} label={isFetchingFNG ? 'Updating...' : (stockSentiment?.label ?? 'Neutral')} isAnalyzing={isFetchingFNG} compact />
             </div>
             <div className="space-y-2 relative group">
               <div className="flex items-center justify-between px-1">
                 <h3 className="text-[9px] font-bold opacity-60 uppercase tracking-tighter">Crypto F&G</h3>
                 <button onClick={() => fetchFearGreedData()} disabled={isFetchingFNG} className={`p-1 hover:bg-white/10 rounded transition-colors ${isFetchingFNG ? 'animate-spin' : ''}`}><RefreshCw size={10} className="opacity-40" /></button>
               </div>
-              <FearGreedIndex value={cryptoSentiment?.score ?? 50} label={isFetchingFNG && !cryptoSentiment ? 'Loading...' : (cryptoSentiment?.label ?? (fngError ? 'Fetch Error' : 'Neutral'))} isAnalyzing={isFetchingFNG} compact />
+              <FearGreedIndex value={cryptoSentiment?.score ?? 50} label={isFetchingFNG ? 'Updating...' : (cryptoSentiment?.label ?? 'Neutral')} isAnalyzing={isFetchingFNG} compact />
             </div>
           </div>
           
-          {renderAIAnalystBox(false)}
+          {renderAnalyst(false)}
         </div>
       </div>
 
       {isMaximized && (
-        <div className="fixed inset-0 z-[90] bg-black/90 backdrop-blur-xl animate-in fade-in duration-500">
-           {renderAIAnalystBox(true)}
+        <div className="fixed inset-0 z-[90] bg-black/90 backdrop-blur-xl animate-in fade-in duration-500 flex items-center justify-center">
+           {renderAnalyst(true)}
            <div className="fixed top-6 right-6 z-[110]">
              <button onClick={() => setIsMaximized(false)} className="p-4 bg-white/10 hover:bg-red-500/80 text-white rounded-full transition-all shadow-2xl active:scale-90 border border-white/10">
                <X size={28} />
@@ -427,7 +396,7 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
       <div className="glass-effect rounded-3xl p-8 border border-white/5">
          <div className="flex items-center justify-between mb-6">
            <h3 className="text-sm font-bold opacity-60 uppercase tracking-widest">{t.watchlist}</h3>
-           <span className="text-[9px] font-bold text-gray-500 uppercase flex items-center gap-1">Powered by TradingView Chart</span>
+           <span className="text-[9px] font-bold text-gray-500 uppercase flex items-center gap-1">Live Asset Watchlist</span>
          </div>
          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
             {state.watchlist.map(s => {

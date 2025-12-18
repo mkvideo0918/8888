@@ -140,8 +140,10 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
   const [inputValue, setInputValue] = useState('');
   const [prices, setPrices] = useState<Record<string, { price: number; change: number }>>({});
   const [marketOpen, setMarketOpen] = useState(isUSMarketOpen());
-  const [stockSentiment, setStockSentiment] = useState({ score: 50, label: 'Neutral' });
-  const [cryptoSentiment, setCryptoSentiment] = useState({ score: 50, label: 'Neutral' });
+  
+  // 初始值設為 null 以觸發 Loading 狀態，防止顯示錯誤的預設值 50
+  const [stockSentiment, setStockSentiment] = useState<{score: number, label: string} | null>(null);
+  const [cryptoSentiment, setCryptoSentiment] = useState<{score: number, label: string} | null>(null);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const t = TRANSLATIONS[state.language];
@@ -274,14 +276,24 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
                 <h3 className="text-[9px] font-bold opacity-60 uppercase tracking-tighter">US Stock (CNN)</h3>
                 <Gauge size={10} className="opacity-40" />
               </div>
-              <FearGreedIndex value={stockSentiment.score} label={stockSentiment.label} isAnalyzing={isFetchingFNG} compact />
+              <FearGreedIndex 
+                value={stockSentiment?.score ?? 0} 
+                label={stockSentiment?.label ?? 'Loading...'} 
+                isAnalyzing={isFetchingFNG || !stockSentiment} 
+                compact 
+              />
             </div>
             <div className="space-y-2 relative">
               <div className="flex items-center justify-between px-1">
                 <h3 className="text-[9px] font-bold opacity-60 uppercase tracking-tighter">Crypto (Coinglass)</h3>
                 <Zap size={10} className="opacity-40" />
               </div>
-              <FearGreedIndex value={cryptoSentiment.score} label={cryptoSentiment.label} isAnalyzing={isFetchingFNG} compact />
+              <FearGreedIndex 
+                value={cryptoSentiment?.score ?? 0} 
+                label={cryptoSentiment?.label ?? 'Loading...'} 
+                isAnalyzing={isFetchingFNG || !cryptoSentiment} 
+                compact 
+              />
             </div>
           </div>
           

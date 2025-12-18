@@ -7,11 +7,12 @@ export const getFearGreedIndices = async (language: string) => {
   const isChinese = language === 'zh-TW';
 
   try {
+    // 使用更精確的搜尋指令，避免模型找到過期的文章數據
     const response: GenerateContentResponse = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: "請搜索並提供兩個最新的恐慌貪婪指數數據：1. CNN Business 的美股恐慌貪婪指數。 2. Coinglass 提供的虛擬貨幣恐慌貪婪指數 (Crypto Fear & Greed Index)。輸出包含數值 (0-100) 與標籤。",
+      contents: "請即時搜索並提取今日最新的數據：1. CNN Business 官方的『Fear & Greed Index』(美股)。 2. Coinglass 官方的『Bitcoin Fear & Greed Index』。請忽略舊的新聞稿，僅提取當前的數值（0-100）與對應標籤（如 Greed, Fear）。",
       config: {
-        systemInstruction: "你是一個專業的金融數據提取助手。請使用 Google Search 獲取最新的數據。輸出必須為 JSON 格式，包含 stock (score, label) 和 crypto (score, label) 兩個對象。",
+        systemInstruction: "你是一個專業的實時金融數據提取專家。你必須使用 Google Search 工具。輸出必須是精確的 JSON，包含 stock 和 crypto 兩個對象，每個對象都有 score (整數) 和 label (字串)。如果搜索結果有衝突，請以官方頁面顯示的最新的數值為準。",
         tools: [{googleSearch: {}}],
         responseMimeType: "application/json",
         responseSchema: {

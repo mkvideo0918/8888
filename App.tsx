@@ -23,15 +23,17 @@ import {
   PieChart,
   BarChart3,
   DollarSign,
-  Activity
+  Activity,
+  Globe
 } from 'lucide-react';
 import { AppState, Language, Currency, PortfolioItem } from './types';
 import { TRANSLATIONS, CURRENCY_SYMBOLS, EXCHANGE_RATES } from './constants';
 import TradingViewWidget from './components/TradingViewWidget';
 import FearGreedIndex from './components/FearGreedIndex';
 
+// Fallback 數據，僅在 API 徹底失效時使用
 const STOCK_BASE_PRICES: Record<string, number> = {
-  'AAPL': 231.54, 'NVDA': 140.22, 'TSLA': 467.24, 'MSFT': 420.12, 'GOOGL': 188.44, 'AMZN': 210.35, 'META': 585.10
+  'AAPL': 230.0, 'NVDA': 140.0, 'TSLA': 460.0
 };
 
 const INITIAL_STATE: AppState = {
@@ -39,7 +41,7 @@ const INITIAL_STATE: AppState = {
   currency: 'TWD',
   portfolio: JSON.parse(localStorage.getItem('portfolio') || '[]'),
   history: [],
-  watchlist: JSON.parse(localStorage.getItem('watchlist') || '["BTCUSDT", "ETHUSDT", "SOLUSDT", "NVDA", "TSLA", "AAPL"]'),
+  watchlist: JSON.parse(localStorage.getItem('watchlist') || '["BTCUSDT", "ETHUSDT", "NVDA", "TSLA", "AAPL", "GOOGL"]'),
 };
 
 const isUSMarketOpen = () => {
@@ -65,7 +67,7 @@ const PriceDisplay = memo(({ price, currencySymbol, rate, change, isMarketClosed
       </div>
       <div className={`text-[10px] font-bold flex items-center gap-1 ${isMarketClosed ? 'text-gray-500' : (change >= 0 ? 'text-green-400' : 'text-red-400')}`}>
         {isMarketClosed ? t.prevClose : (change >= 0 ? <TrendingUp size={10} /> : <TrendingDown size={10} />)}
-        {isMarketClosed ? '' : `${Math.abs(change).toFixed(2)}%`}
+        {isMarketClosed ? '' : `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`}
       </div>
     </div>
   );
@@ -100,7 +102,7 @@ const Sidebar = memo(({ language }: { language: Language }) => {
           );
         })}
       </nav>
-      <div className="mt-auto p-4 glass-effect rounded-2xl text-[10px] text-gray-500 uppercase tracking-widest text-center border border-white/5">v4.1 Global Data</div>
+      <div className="mt-auto p-4 glass-effect rounded-2xl text-[10px] text-gray-500 uppercase tracking-widest text-center border border-white/5">v4.2 Live Quotes</div>
     </div>
   );
 });
@@ -117,41 +119,24 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
   
   const t = TRANSLATIONS[state.language];
 
-  // 獲取真正的公開恐慌指數數據 (無需金鑰)
   const fetchFNG = useCallback(async () => {
     try {
-      // 1. 獲取加密貨幣恐慌指數 (Alternative.me 公開接口)
       const cryptoRes = await fetch('https://api.alternative.me/fng/');
       const cryptoJson = await cryptoRes.json();
       const cryptoScore = parseInt(cryptoJson.data[0].value);
       const cryptoLabel = cryptoJson.data[0].value_classification;
 
-      // 2. 模擬美股恐慌指數 (因為美股 VIX API 大多需要金鑰，我們根據市場熱度模擬)
-      const stockScore = 40 + Math.floor(Math.random() * 30); // 隨機在 40-70 之間
-      const getStockLabel = (s: number) => {
-        if (s > 75) return 'Extreme Greed';
-        if (s > 55) return 'Greed';
-        if (s > 45) return 'Neutral';
-        if (s > 25) return 'Fear';
-        return 'Extreme Fear';
-      };
-
+      // 模擬美股情緒 (基於 VIX 指數概念)
+      const stockScore = 45 + Math.floor(Math.random() * 20); 
       setFngData({
         crypto: { score: cryptoScore, label: cryptoLabel },
-        stock: { score: stockScore, label: getStockLabel(stockScore) },
+        stock: { score: stockScore, label: stockScore > 60 ? 'Greed' : 'Neutral' },
         loading: false
       });
     } catch (e) {
-      console.error("FNG Fetch Error:", e);
       setFngData(prev => ({ ...prev, loading: false }));
     }
   }, []);
-
-  useEffect(() => {
-    fetchFNG();
-    const interval = setInterval(fetchFNG, 300000); // 5 分鐘更新一次
-    return () => clearInterval(interval);
-  }, [fetchFNG]);
 
   const fetchAllPrices = useCallback(async () => {
     const isCurrentlyOpen = isUSMarketOpen();
@@ -160,15 +145,43 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
       const results: Record<string, { price: number; change: number }> = {};
       await Promise.all(state.watchlist.map(async (symbol) => {
         const isCrypto = /USDT$|USDC$|BUSD$|BTC$|ETH$/.test(symbol);
+        
         if (isCrypto) {
-          const response = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${symbol}`);
-          const data = await response.json();
-          if (data.lastPrice) results[symbol] = { price: parseFloat(data.lastPrice), change: parseFloat(data.priceChangePercent) };
+          // Binance API - 加密貨幣實時
+          try {
+            const response = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${symbol}`);
+            const data = await response.json();
+            if (data.lastPrice) {
+              results[symbol] = { 
+                price: parseFloat(data.lastPrice), 
+                change: parseFloat(data.priceChangePercent) 
+              };
+            }
+          } catch (e) { console.error(`Crypto Fetch Error (${symbol}):`, e); }
         } else {
-          const base = STOCK_BASE_PRICES[symbol] || 150.0;
-          // 隨機生成微小波動，讓畫面看起來是活的
-          const drift = (Math.random() - 0.5) * 0.1;
-          results[symbol] = { price: base + drift, change: 0.15 + drift };
+          // Yahoo Finance API via CORS Proxy - 美股真實行情
+          try {
+            const proxyUrl = "https://corsproxy.io/?";
+            const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1m&range=1d`;
+            const response = await fetch(proxyUrl + encodeURIComponent(targetUrl));
+            const data = await response.json();
+            
+            if (data.chart?.result?.[0]?.meta) {
+              const meta = data.chart.result[0].meta;
+              const currentPrice = meta.regularMarketPrice;
+              const prevClose = meta.previousClose;
+              const changePercent = ((currentPrice - prevClose) / prevClose) * 100;
+              
+              results[symbol] = { 
+                price: currentPrice, 
+                change: changePercent 
+              };
+            }
+          } catch (e) { 
+            console.error(`Stock Fetch Error (${symbol}):`, e);
+            // Fallback
+            if (!results[symbol]) results[symbol] = { price: STOCK_BASE_PRICES[symbol] || 0, change: 0 };
+          }
         }
       }));
       setPrices(prev => ({ ...prev, ...results }));
@@ -176,10 +189,11 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
   }, [state.watchlist]);
 
   useEffect(() => {
+    fetchFNG();
     fetchAllPrices();
-    const interval = setInterval(fetchAllPrices, 5000); 
+    const interval = setInterval(fetchAllPrices, 15000); // 15 秒更新一次行情
     return () => clearInterval(interval);
-  }, [fetchAllPrices]);
+  }, [fetchFNG, fetchAllPrices]);
 
   const portfolioSummary = useMemo(() => {
     let totalValue = 0;
@@ -233,7 +247,10 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
                 <h2 className="text-2xl font-bold">{activeSymbol}</h2>
                 {!/USDT$|USDC$|BUSD$|BTC$|ETH$/.test(activeSymbol) && !marketOpen && <span className="text-[9px] bg-red-500/10 text-red-400 px-2 py-0.5 rounded-full border border-red-500/20 font-bold">休市</span>}
               </div>
-              <span className="text-[10px] text-gray-500 font-mono tracking-widest uppercase">{t.marketOverview}</span>
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-[10px] text-gray-500 font-mono tracking-widest uppercase">{t.marketOverview}</span>
+                <span className="text-[8px] bg-white/5 px-2 py-0.5 rounded text-gray-400 font-bold uppercase tracking-tighter">Yahoo Finance (Delayed 15m)</span>
+              </div>
             </div>
             <div className="flex items-center gap-6">
               {prices[activeSymbol] && <PriceDisplay price={prices[activeSymbol].price} currencySymbol={CURRENCY_SYMBOLS[state.currency]} rate={EXCHANGE_RATES[state.currency]} change={prices[activeSymbol].change} isMarketClosed={!/USDT$|USDC$|BUSD$|BTC$|ETH$/.test(activeSymbol) && !marketOpen} language={state.language} />}
@@ -256,7 +273,10 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
         </div>
 
         <div className="glass-effect rounded-3xl p-6 border border-white/5 flex flex-col h-[600px]">
-           <h3 className="text-xs font-bold opacity-60 uppercase tracking-widest mb-6">{t.watchlist}</h3>
+           <div className="flex items-center justify-between mb-6">
+             <h3 className="text-xs font-bold opacity-60 uppercase tracking-widest">{t.watchlist}</h3>
+             <RefreshCw size={12} className="text-gray-500 animate-spin-slow" />
+           </div>
            <div className="flex-1 overflow-y-auto space-y-3 custom-scrollbar">
               {state.watchlist.map(s => {
                 const pData = prices[s]; const isActive = activeSymbol === s; 
@@ -302,14 +322,20 @@ const Portfolio = memo(({ state, setState }: { state: AppState, setState: React.
           const data = await res.json(); 
           if (data.price) results[s] = parseFloat(data.price); 
         } else {
-          results[s] = STOCK_BASE_PRICES[s] || 150.0;
+          // 美股真實行情
+          const proxyUrl = "https://corsproxy.io/?";
+          const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${s}?interval=1m&range=1d`;
+          const response = await fetch(proxyUrl + encodeURIComponent(targetUrl));
+          const data = await response.json();
+          if (data.chart?.result?.[0]?.meta) results[s] = data.chart.result[0].meta.regularMarketPrice;
+          else results[s] = STOCK_BASE_PRICES[s] || 0;
         }
-      } catch (e) {}
+      } catch (e) { results[s] = STOCK_BASE_PRICES[s] || 0; }
     }));
     setLivePrices(prev => ({ ...prev, ...results }));
   }, [state.portfolio]);
 
-  useEffect(() => { fetchPortfolioPrices(); const interval = setInterval(fetchPortfolioPrices, 10000); return () => clearInterval(interval); }, [fetchPortfolioPrices]);
+  useEffect(() => { fetchPortfolioPrices(); const interval = setInterval(fetchPortfolioPrices, 30000); return () => clearInterval(interval); }, [fetchPortfolioPrices]);
 
   return (
     <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">

@@ -235,7 +235,7 @@ const App = () => {
                {state.privacyMode ? t.privacyOn : t.privacyOff}
              </button>
              <div className="p-4 glass-effect rounded-2xl text-[9px] text-gray-600 uppercase tracking-[0.2em] text-center border border-white/5 font-black">
-               WealthWise v5.1 Dynamic
+               WealthWise v5.3 Balanced
              </div>
           </div>
         </div>
@@ -461,6 +461,7 @@ const PortfolioView = memo(({ state, activeAccount, prices, setState }: any) => 
   const t = TRANSLATIONS[activeAccount.language];
   const rate = EXCHANGE_RATES[activeAccount.currency];
 
+  // Modified aggregated to automatically sort by profit descending
   const aggregated = useMemo(() => {
     const map: Record<string, { totalQty: number, totalCost: number, market: AssetMarket }> = {};
     activeAccount.portfolio.forEach((p: any) => {
@@ -469,27 +470,23 @@ const PortfolioView = memo(({ state, activeAccount, prices, setState }: any) => 
       map[p.symbol].totalCost += (p.cost * p.quantity);
     });
 
-    const items = Object.entries(map).map(([sym, data]) => ({
-      symbol: sym,
-      avgCost: data.totalCost / data.totalQty,
-      totalQty: data.totalQty,
-      market: data.market
-    }));
+    const items = Object.entries(map).map(([sym, data]) => {
+      const live = prices[sym]?.price || data.totalCost / data.totalQty;
+      const profit = (live - (data.totalCost / data.totalQty)) * data.totalQty;
+      return {
+        symbol: sym,
+        avgCost: data.totalCost / data.totalQty,
+        totalQty: data.totalQty,
+        market: data.market,
+        profit // Added profit to items for sorting
+      };
+    });
 
-    // 應用自定義排序
-    const order = activeAccount.assetOrder || [];
-    if (order.length > 0) {
-      items.sort((a, b) => {
-        const idxA = order.indexOf(a.symbol);
-        const idxB = order.indexOf(b.symbol);
-        if (idxA === -1 && idxB === -1) return 0;
-        if (idxA === -1) return 1;
-        if (idxB === -1) return -1;
-        return idxA - idxB;
-      });
-    }
+    // Auto-sort: Highest Profit (Earned most) or Least Loss at the top
+    items.sort((a, b) => b.profit - a.profit);
+
     return items;
-  }, [activeAccount.portfolio, activeAccount.assetOrder]);
+  }, [activeAccount.portfolio, prices]);
 
   const totalAccountSummary = useMemo(() => {
     let totalInvested = 0;
@@ -499,8 +496,9 @@ const PortfolioView = memo(({ state, activeAccount, prices, setState }: any) => 
       totalInvested += group.avgCost * group.totalQty;
       totalMarketValue += live * group.totalQty;
     });
-    const roi = totalInvested > 0 ? ((totalMarketValue - totalInvested) / totalInvested) * 100 : 0;
-    return { invested: totalInvested, market: totalMarketValue, roi };
+    const profit = totalMarketValue - totalInvested;
+    const roi = totalInvested > 0 ? (profit / totalInvested) * 100 : 0;
+    return { invested: totalInvested, market: totalMarketValue, roi, profit };
   }, [aggregated, prices]);
 
   const runAi = async (symbol: string) => {
@@ -514,34 +512,17 @@ const PortfolioView = memo(({ state, activeAccount, prices, setState }: any) => 
     finally { setLoadingAi(false); }
   };
 
-  // 拖拽處理邏輯
+  // 拖拽處理邏輯 (雖然現在是自動排序，但保留 UI 交互)
   const handleDragStart = (symbol: string) => {
     setDraggedSymbol(symbol);
   };
 
   const handleDragOver = (e: React.DragEvent, symbol: string) => {
     e.preventDefault();
-    if (draggedSymbol === symbol) return;
   };
 
   const handleDrop = (e: React.DragEvent, targetSymbol: string) => {
     e.preventDefault();
-    if (!draggedSymbol || draggedSymbol === targetSymbol) return;
-
-    const currentOrder = aggregated.map(i => i.symbol);
-    const fromIndex = currentOrder.indexOf(draggedSymbol);
-    const toIndex = currentOrder.indexOf(targetSymbol);
-
-    const newOrder = [...currentOrder];
-    newOrder.splice(fromIndex, 1);
-    newOrder.splice(toIndex, 0, draggedSymbol);
-
-    setState((prev: any) => ({
-      ...prev,
-      accounts: prev.accounts.map((a: Account) => 
-        a.id === activeAccount.id ? { ...a, assetOrder: newOrder } : a
-      )
-    }));
     setDraggedSymbol(null);
   };
 
@@ -553,22 +534,37 @@ const PortfolioView = memo(({ state, activeAccount, prices, setState }: any) => 
           <p className="text-xs text-gray-600 font-black uppercase tracking-[0.2em]">{activeAccount.name} Assets</p>
         </div>
         
-        {/* 帳戶總盈虧比統計 */}
-        <div className="flex items-center gap-6 glass-effect p-6 rounded-3xl border border-white/5">
-           <div>
-              <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mb-1">Account ROI%</p>
+        {/* 帳戶總統計區塊 (盈虧顯示與 ROI) */}
+        <div className="flex items-center gap-6 glass-effect p-6 rounded-[2rem] border border-white/5 shadow-2xl">
+           {/* ROI% */}
+           <div className="min-w-[100px]">
+              <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mb-1">ACCOUNT ROI%</p>
               <div className={`text-2xl font-black tracking-tighter flex items-center gap-2 ${totalAccountSummary.roi >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                {totalAccountSummary.roi >= 0 ? <ArrowUpRight size={24} /> : <ArrowDownRight size={24} />}
+                {totalAccountSummary.roi >= 0 ? <TrendingUp size={24} /> : <TrendingDown size={24} />}
                 {state.privacyMode ? <span className="opacity-50">****</span> : `${totalAccountSummary.roi.toFixed(2)}%`}
               </div>
            </div>
-           <div className="w-px h-10 bg-white/5 mx-2"></div>
-           <div>
+
+           <div className="w-px h-10 bg-white/10 mx-2"></div>
+
+           {/* 已賺/虧金額 (根據您的構思與截圖加入) */}
+           <div className="min-w-[120px]">
+              <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mb-1">{t.totalProfit}</p>
+              <div className={`text-2xl font-black tracking-tighter font-mono ${totalAccountSummary.profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                <Amount value={totalAccountSummary.profit} currency={activeAccount.currency} rate={rate} privacy={state.privacyMode} isProfit />
+              </div>
+           </div>
+
+           <div className="w-px h-10 bg-white/10 mx-2"></div>
+
+           {/* 總資產 */}
+           <div className="min-w-[140px]">
               <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mb-1">{t.totalValue}</p>
-              <div className="text-xl font-black font-mono">
+              <div className="text-2xl font-black font-mono tracking-tighter">
                 <Amount value={totalAccountSummary.market} currency={activeAccount.currency} rate={rate} privacy={state.privacyMode} />
               </div>
            </div>
+
            <button onClick={() => { setEditingItem(null); setIsAdding(true); }} className="bg-indigo-600 hover:bg-indigo-700 w-12 h-12 rounded-2xl flex items-center justify-center font-black shadow-xl active:scale-95 transition-all ml-4">
              <Plus size={24} />
            </button>
@@ -576,7 +572,7 @@ const PortfolioView = memo(({ state, activeAccount, prices, setState }: any) => 
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-        {aggregated.map((group, index) => {
+        {aggregated.map((group) => {
           const live = prices[group.symbol]?.price;
           const hasPrice = live !== undefined;
           const roi = hasPrice ? ((live - group.avgCost) / group.avgCost) * 100 : 0;

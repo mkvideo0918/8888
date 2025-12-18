@@ -25,7 +25,8 @@ import {
   Edit3,
   Sparkles,
   ChevronRight,
-  BrainCircuit
+  BrainCircuit,
+  AlertCircle
 } from 'lucide-react';
 import { AppState, Language, Currency, PortfolioItem, AssetMarket } from './types';
 import { TRANSLATIONS, CURRENCY_SYMBOLS, EXCHANGE_RATES } from './constants';
@@ -38,6 +39,18 @@ const INITIAL_STATE: AppState = {
   portfolio: JSON.parse(localStorage.getItem('portfolio') || '[]'),
   history: [],
   watchlist: JSON.parse(localStorage.getItem('watchlist') || '["BTCUSDT", "ETHUSDT", "NVDA", "CRCL", "TSLA", "AAPL"]'),
+};
+
+// 輔助函式：轉換為 Yahoo Finance 代碼
+const getYahooTicker = (symbol: string, market: AssetMarket) => {
+  if (market === 'Crypto') return symbol; // 加密貨幣另外處理
+  switch (market) {
+    case 'TW': return symbol.includes('.') ? symbol : `${symbol}.TW`;
+    case 'MY': return symbol.includes('.') ? symbol : `${symbol}.KL`;
+    case 'HK': return symbol.includes('.') ? symbol : `${symbol}.HK`;
+    case 'US':
+    default: return symbol;
+  }
 };
 
 const isUSMarketOpen = () => {
@@ -95,7 +108,7 @@ const Sidebar = memo(({ language }: { language: Language }) => {
           );
         })}
       </nav>
-      <div className="mt-auto p-4 glass-effect rounded-2xl text-[10px] text-gray-500 uppercase tracking-widest text-center border border-white/5">v4.5 AI Master Analyst</div>
+      <div className="mt-auto p-4 glass-effect rounded-2xl text-[10px] text-gray-500 uppercase tracking-widest text-center border border-white/5">v4.6 Multi-Market Fix</div>
     </div>
   );
 });
@@ -137,7 +150,7 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
         } catch (e) {}
       } else {
         try {
-          // 針對美股如 CRCL 使用優化路徑
+          // 在 Watchlist 中優先嘗試美股，如果失敗可能需要用戶加上後綴
           const proxyUrl = "https://corsproxy.io/?";
           const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1m&range=1d`;
           const response = await fetch(proxyUrl + encodeURIComponent(targetUrl));
@@ -243,21 +256,34 @@ const Portfolio = memo(({ state, setState }: { state: AppState, setState: React.
 
   const fetchPortfolioPrices = useCallback(async () => {
     if (state.portfolio.length === 0) return;
-    const symbols = Array.from(new Set(state.portfolio.map(i => i.symbol)));
+    
+    // 獲取代碼及其所屬市場
+    const uniqueAssets = state.portfolio.reduce((acc, curr) => {
+      if (!acc[curr.symbol]) acc[curr.symbol] = curr.market;
+      return acc;
+    }, {} as Record<string, AssetMarket>);
+
     const results: Record<string, number> = {};
-    await Promise.all(symbols.map(async (s) => {
+    await Promise.all(Object.entries(uniqueAssets).map(async ([s, m]) => {
       try {
-        if (/USDT$|USDC$|BUSD$|BTC$|ETH$/.test(s)) { 
+        if (m === 'Crypto' || /USDT$|USDC$|BUSD$|BTC$|ETH$/.test(s)) { 
           const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${s}`); 
-          const data = await res.json(); if (data.price) results[s] = parseFloat(data.price); 
+          const data = await res.json(); 
+          if (data.price) results[s] = parseFloat(data.price); 
         } else {
+          // 根據市場分類獲取 Yahoo 代碼
+          const yahooTicker = getYahooTicker(s, m);
           const proxyUrl = "https://corsproxy.io/?";
-          const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${s}?interval=1m&range=1d`;
+          const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooTicker}?interval=1m&range=1d`;
           const response = await fetch(proxyUrl + encodeURIComponent(targetUrl));
           const data = await response.json();
-          if (data.chart?.result?.[0]?.meta) results[s] = data.chart.result[0].meta.regularMarketPrice;
+          if (data.chart?.result?.[0]?.meta) {
+            results[s] = data.chart.result[0].meta.regularMarketPrice;
+          }
         }
-      } catch (e) {}
+      } catch (e) {
+        console.error(`Failed to fetch price for ${s} (${m})`, e);
+      }
     }));
     setLivePrices(prev => ({ ...prev, ...results }));
   }, [state.portfolio]);
@@ -307,6 +333,7 @@ const Portfolio = memo(({ state, setState }: { state: AppState, setState: React.
                   <option value="Crypto">加密貨幣 (Crypto)</option>
                   <option value="TW">台灣股市 (TW Stocks)</option>
                   <option value="MY">馬來西亞股市 (MY Stocks)</option>
+                  <option value="HK">香港股市 (HK Stocks)</option>
                 </select>
               </label>
               <label className="space-y-1"><span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">{t.cost}</span><input type="number" className="w-full bg-white/5 border border-white/10 rounded-xl p-4 outline-none" value={newItem.cost || ''} onChange={e => setNewItem({...newItem, cost: Number(e.target.value)})} /></label>
@@ -350,9 +377,12 @@ const Portfolio = memo(({ state, setState }: { state: AppState, setState: React.
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {aggregatedPortfolio.map(group => {
-          const livePrice = livePrices[group.symbol] || group.avgCost;
-          const totalProfit = (livePrice - group.avgCost) * group.totalQty;
+          const livePrice = livePrices[group.symbol];
+          const hasPrice = livePrice !== undefined;
+          const currentPriceVal = hasPrice ? livePrice : group.avgCost;
+          const totalProfit = hasPrice ? (currentPriceVal - group.avgCost) * group.totalQty : 0;
           const isProfit = totalProfit >= 0;
+          
           return (
             <div key={group.symbol} className="glass-effect p-8 rounded-[2rem] border border-white/10 space-y-6 group/card hover:border-indigo-500/50 transition-all shadow-xl">
               <div className="flex justify-between items-start">
@@ -360,16 +390,26 @@ const Portfolio = memo(({ state, setState }: { state: AppState, setState: React.
                   <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center font-black text-indigo-400">{group.symbol.slice(0,2)}</div>
                   <div><h4 className="text-2xl font-black tracking-tighter">{group.symbol}</h4><p className="text-[10px] text-gray-500 uppercase font-bold tracking-widest">Holdings Summary</p></div>
                 </div>
-                <div className={`px-4 py-1.5 rounded-full text-[10px] font-black ${isProfit ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
-                  {((livePrice - group.avgCost) / (group.avgCost || 1) * 100).toFixed(2)}%
-                </div>
+                {hasPrice ? (
+                  <div className={`px-4 py-1.5 rounded-full text-[10px] font-black ${isProfit ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
+                    {((currentPriceVal - group.avgCost) / (group.avgCost || 1) * 100).toFixed(2)}%
+                  </div>
+                ) : (
+                  <div className="px-4 py-1.5 rounded-full text-[10px] font-black bg-white/5 text-gray-500 flex items-center gap-1">
+                    <AlertCircle size={10} /> 報價中斷
+                  </div>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-4 text-sm font-bold">
                 <div className="opacity-60 uppercase text-[9px] tracking-widest">{t.avgCost}: {symbolIcon} {(group.avgCost * rate).toLocaleString()}</div>
                 <div className="opacity-60 uppercase text-[9px] tracking-widest text-right">{t.totalHoldings}: {group.totalQty}</div>
               </div>
               <div className="pt-2 border-t border-white/5 flex items-center justify-between">
-                 <p className={`font-mono text-2xl font-black ${isProfit ? 'text-green-400' : 'text-red-400'}`}>{symbolIcon} {(totalProfit * rate).toLocaleString(undefined, {maximumFractionDigits: 0})}</p>
+                 {hasPrice ? (
+                    <p className={`font-mono text-2xl font-black ${isProfit ? 'text-green-400' : 'text-red-400'}`}>{symbolIcon} {(totalProfit * rate).toLocaleString(undefined, {maximumFractionDigits: 0})}</p>
+                 ) : (
+                    <p className="font-mono text-2xl font-black text-gray-600">--</p>
+                 )}
                  <button onClick={() => handleAIAnalysis(group.symbol)} className="p-3 bg-indigo-600/10 text-indigo-400 rounded-xl hover:bg-indigo-600 hover:text-white transition-all group-hover/card:scale-110"><Sparkles size={18} /></button>
               </div>
             </div>

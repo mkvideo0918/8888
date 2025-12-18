@@ -11,7 +11,7 @@ export const TRANSLATIONS: Record<Language, any> = {
     marketOverview: 'Market Overview',
     addPortfolio: 'Add Asset',
     cost: 'Entry Cost',
-    currentPrice: 'Live Price',
+    currentPrice: 'Market Price',
     profit: 'Profit / Loss',
     plRatio: 'P/L %',
     symbol: 'Ticker',
@@ -31,8 +31,10 @@ export const TRANSLATIONS: Record<Language, any> = {
     aiAnalysis: 'AI Master Insight',
     analyzing: 'Master is thinking...',
     marketType: 'Market Type',
-    avgCost: 'Avg. Cost',
-    totalHoldings: 'Total Holdings'
+    avgCost: 'Entry Price',
+    totalHoldings: 'Total Holdings',
+    totalCost: 'Total Invested',
+    marketValue: 'Market Value'
   },
   'zh-TW': {
     dashboard: '實時行情',
@@ -42,7 +44,7 @@ export const TRANSLATIONS: Record<Language, any> = {
     fearGreed: '市場情緒指標',
     marketOverview: '市場概覽',
     addPortfolio: '新增資產',
-    cost: '買入成本',
+    cost: '入場價',
     currentPrice: '目前市價',
     profit: '預估盈虧',
     plRatio: '報酬率',
@@ -64,7 +66,9 @@ export const TRANSLATIONS: Record<Language, any> = {
     analyzing: '大師正在觀測盤勢...',
     marketType: '市場分類',
     avgCost: '平均成本',
-    totalHoldings: '總持有量'
+    totalHoldings: '持有數量',
+    totalCost: '投資本金',
+    marketValue: '當前市值'
   }
 };
 

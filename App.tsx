@@ -26,7 +26,9 @@ import {
   Sparkles,
   ChevronRight,
   BrainCircuit,
-  AlertCircle
+  AlertCircle,
+  ArrowUpRight,
+  ArrowDownRight
 } from 'lucide-react';
 import { AppState, Language, Currency, PortfolioItem, AssetMarket } from './types';
 import { TRANSLATIONS, CURRENCY_SYMBOLS, EXCHANGE_RATES } from './constants';
@@ -41,9 +43,8 @@ const INITIAL_STATE: AppState = {
   watchlist: JSON.parse(localStorage.getItem('watchlist') || '["BTCUSDT", "ETHUSDT", "NVDA", "CRCL", "TSLA", "AAPL"]'),
 };
 
-// 輔助函式：轉換為 Yahoo Finance 代碼
 const getYahooTicker = (symbol: string, market: AssetMarket) => {
-  if (market === 'Crypto') return symbol; // 加密貨幣另外處理
+  if (market === 'Crypto') return symbol;
   switch (market) {
     case 'TW': return symbol.includes('.') ? symbol : `${symbol}.TW`;
     case 'MY': return symbol.includes('.') ? symbol : `${symbol}.KL`;
@@ -108,7 +109,7 @@ const Sidebar = memo(({ language }: { language: Language }) => {
           );
         })}
       </nav>
-      <div className="mt-auto p-4 glass-effect rounded-2xl text-[10px] text-gray-500 uppercase tracking-widest text-center border border-white/5">v4.6 Multi-Market Fix</div>
+      <div className="mt-auto p-4 glass-effect rounded-2xl text-[10px] text-gray-500 uppercase tracking-widest text-center border border-white/5">v4.7 Portfolio Pro</div>
     </div>
   );
 });
@@ -150,7 +151,6 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
         } catch (e) {}
       } else {
         try {
-          // 在 Watchlist 中優先嘗試美股，如果失敗可能需要用戶加上後綴
           const proxyUrl = "https://corsproxy.io/?";
           const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1m&range=1d`;
           const response = await fetch(proxyUrl + encodeURIComponent(targetUrl));
@@ -256,34 +256,22 @@ const Portfolio = memo(({ state, setState }: { state: AppState, setState: React.
 
   const fetchPortfolioPrices = useCallback(async () => {
     if (state.portfolio.length === 0) return;
-    
-    // 獲取代碼及其所屬市場
-    const uniqueAssets = state.portfolio.reduce((acc, curr) => {
-      if (!acc[curr.symbol]) acc[curr.symbol] = curr.market;
-      return acc;
-    }, {} as Record<string, AssetMarket>);
-
+    const uniqueAssets = state.portfolio.reduce((acc, curr) => { if (!acc[curr.symbol]) acc[curr.symbol] = curr.market; return acc; }, {} as Record<string, AssetMarket>);
     const results: Record<string, number> = {};
     await Promise.all(Object.entries(uniqueAssets).map(async ([s, m]) => {
       try {
         if (m === 'Crypto' || /USDT$|USDC$|BUSD$|BTC$|ETH$/.test(s)) { 
           const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${s}`); 
-          const data = await res.json(); 
-          if (data.price) results[s] = parseFloat(data.price); 
+          const data = await res.json(); if (data.price) results[s] = parseFloat(data.price); 
         } else {
-          // 根據市場分類獲取 Yahoo 代碼
           const yahooTicker = getYahooTicker(s, m);
           const proxyUrl = "https://corsproxy.io/?";
           const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooTicker}?interval=1m&range=1d`;
           const response = await fetch(proxyUrl + encodeURIComponent(targetUrl));
           const data = await response.json();
-          if (data.chart?.result?.[0]?.meta) {
-            results[s] = data.chart.result[0].meta.regularMarketPrice;
-          }
+          if (data.chart?.result?.[0]?.meta) results[s] = data.chart.result[0].meta.regularMarketPrice;
         }
-      } catch (e) {
-        console.error(`Failed to fetch price for ${s} (${m})`, e);
-      }
+      } catch (e) {}
     }));
     setLivePrices(prev => ({ ...prev, ...results }));
   }, [state.portfolio]);
@@ -296,24 +284,17 @@ const Portfolio = memo(({ state, setState }: { state: AppState, setState: React.
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const currentPrice = livePrices[symbol] || "N/A";
       const prompt = `你是一位世界頂級的金融投資大師。請針對代碼為 ${symbol} 的資產進行深度市場分析。目前的參考價格約為 ${currentPrice} USD。請提供：1. 近期盤勢分析 2. 技術面支撐與壓力 3. 基本面或消息面解讀 4. 給予 Buy/Hold/Sell 建議與理由。請使用繁體中文並保持專業。`;
-      
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: prompt
-      });
+      const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt });
       setAiReport({ symbol, content: response.text || "分析失敗，請稍後再試。" });
     } catch (e) {
-      console.error(e);
-      setAiReport({ symbol, content: "大師正在閉關，暫時無法分析。請檢查 API 連線。" });
-    } finally {
-      setIsAnalyzing(false);
-    }
+      setAiReport({ symbol, content: "分析模組暫時無法使用，請檢查網絡連線。" });
+    } finally { setIsAnalyzing(false); }
   };
 
   return (
     <div className="space-y-10 animate-in slide-in-from-bottom-4 duration-500">
       <div className="flex justify-between items-center">
-        <div><h2 className="text-3xl font-bold">{t.portfolio}</h2><p className="text-xs text-gray-500 mt-1 uppercase tracking-widest font-bold">Comprehensive Asset Tracking</p></div>
+        <div><h2 className="text-3xl font-bold">{t.portfolio}</h2><p className="text-xs text-gray-500 mt-1 uppercase tracking-widest font-bold">Track Assets & Maximize ROI</p></div>
         <button onClick={() => { setEditingId(null); setIsAdding(true); }} className="bg-indigo-600 hover:bg-indigo-700 px-8 py-3 rounded-2xl flex items-center gap-2 font-bold shadow-xl transition-all active:scale-95"><Plus size={20} /> {t.addPortfolio}</button>
       </div>
       
@@ -352,7 +333,6 @@ const Portfolio = memo(({ state, setState }: { state: AppState, setState: React.
         </div>
       )}
 
-      {/* AI 分析報告彈窗 */}
       {(aiReport || isAnalyzing) && (
         <div className="fixed inset-0 bg-black/95 backdrop-blur-xl z-[110] flex items-center justify-center p-6 overflow-y-auto">
           <div className="glass-effect p-10 rounded-[2.5rem] w-full max-w-2xl border border-indigo-500/30 relative">
@@ -367,50 +347,82 @@ const Portfolio = memo(({ state, setState }: { state: AppState, setState: React.
                 <p className="text-xl font-bold animate-pulse text-indigo-200">{t.analyzing}</p>
               </div>
             ) : (
-              <div className="prose prose-invert max-w-none text-gray-300 leading-relaxed whitespace-pre-wrap font-medium">
-                {aiReport?.content}
-              </div>
+              <div className="prose prose-invert max-w-none text-gray-300 leading-relaxed whitespace-pre-wrap font-medium">{aiReport?.content}</div>
             )}
           </div>
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
         {aggregatedPortfolio.map(group => {
           const livePrice = livePrices[group.symbol];
           const hasPrice = livePrice !== undefined;
           const currentPriceVal = hasPrice ? livePrice : group.avgCost;
           const totalProfit = hasPrice ? (currentPriceVal - group.avgCost) * group.totalQty : 0;
+          const totalInvested = group.avgCost * group.totalQty;
+          const marketVal = currentPriceVal * group.totalQty;
+          const roi = ((currentPriceVal - group.avgCost) / (group.avgCost || 1)) * 100;
           const isProfit = totalProfit >= 0;
           
           return (
-            <div key={group.symbol} className="glass-effect p-8 rounded-[2rem] border border-white/10 space-y-6 group/card hover:border-indigo-500/50 transition-all shadow-xl">
+            <div key={group.symbol} className="glass-effect p-8 rounded-[2.5rem] border border-white/10 space-y-6 group/card hover:border-indigo-500/50 transition-all shadow-2xl relative overflow-hidden">
+              {isProfit && hasPrice && <div className="absolute -right-8 -top-8 w-24 h-24 bg-green-500/10 blur-3xl pointer-events-none group-hover:bg-green-500/20 transition-all"></div>}
+              
               <div className="flex justify-between items-start">
                 <div className="flex gap-3">
-                  <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center font-black text-indigo-400">{group.symbol.slice(0,2)}</div>
-                  <div><h4 className="text-2xl font-black tracking-tighter">{group.symbol}</h4><p className="text-[10px] text-gray-500 uppercase font-bold tracking-widest">Holdings Summary</p></div>
+                  <div className="w-14 h-14 bg-white/5 rounded-2xl flex items-center justify-center font-black text-xl text-indigo-400 border border-white/5">{group.symbol.slice(0,2)}</div>
+                  <div>
+                    <h4 className="text-2xl font-black tracking-tighter flex items-center gap-2">{group.symbol} {isProfit && hasPrice && <TrendingUp size={16} className="text-green-400" />}</h4>
+                    <p className="text-[10px] text-gray-500 uppercase font-bold tracking-widest">Holdings Summary</p>
+                  </div>
                 </div>
                 {hasPrice ? (
-                  <div className={`px-4 py-1.5 rounded-full text-[10px] font-black ${isProfit ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
-                    {((currentPriceVal - group.avgCost) / (group.avgCost || 1) * 100).toFixed(2)}%
+                  <div className={`px-4 py-2 rounded-2xl text-xs font-black flex items-center gap-1 shadow-lg ${isProfit ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
+                    {isProfit ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />} {roi.toFixed(2)}%
                   </div>
                 ) : (
-                  <div className="px-4 py-1.5 rounded-full text-[10px] font-black bg-white/5 text-gray-500 flex items-center gap-1">
-                    <AlertCircle size={10} /> 報價中斷
-                  </div>
+                  <div className="px-4 py-2 rounded-2xl text-[10px] font-black bg-white/5 text-gray-500 flex items-center gap-1"><AlertCircle size={10} /> {t.marketClosed}</div>
                 )}
               </div>
-              <div className="grid grid-cols-2 gap-4 text-sm font-bold">
-                <div className="opacity-60 uppercase text-[9px] tracking-widest">{t.avgCost}: {symbolIcon} {(group.avgCost * rate).toLocaleString()}</div>
-                <div className="opacity-60 uppercase text-[9px] tracking-widest text-right">{t.totalHoldings}: {group.totalQty}</div>
+
+              {/* 價格對比區域 */}
+              <div className="grid grid-cols-2 gap-4 py-4 border-y border-white/5">
+                <div>
+                  <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-1">{t.avgCost}</p>
+                  <p className="font-mono text-lg font-black">{symbolIcon} {(group.avgCost * rate).toLocaleString(undefined, {minimumFractionDigits: 2})}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-1">{t.currentPrice}</p>
+                  <p className={`font-mono text-lg font-black ${hasPrice ? (isProfit ? 'text-green-400' : 'text-red-400') : 'text-gray-500'}`}>
+                    {hasPrice ? `${symbolIcon} ${(currentPriceVal * rate).toLocaleString(undefined, {minimumFractionDigits: 2})}` : '--'}
+                  </p>
+                </div>
               </div>
-              <div className="pt-2 border-t border-white/5 flex items-center justify-between">
-                 {hasPrice ? (
-                    <p className={`font-mono text-2xl font-black ${isProfit ? 'text-green-400' : 'text-red-400'}`}>{symbolIcon} {(totalProfit * rate).toLocaleString(undefined, {maximumFractionDigits: 0})}</p>
-                 ) : (
-                    <p className="font-mono text-2xl font-black text-gray-600">--</p>
-                 )}
-                 <button onClick={() => handleAIAnalysis(group.symbol)} className="p-3 bg-indigo-600/10 text-indigo-400 rounded-xl hover:bg-indigo-600 hover:text-white transition-all group-hover/card:scale-110"><Sparkles size={18} /></button>
+
+              {/* 盈虧與市值顯示 */}
+              <div className="space-y-4">
+                <div className="flex justify-between items-end">
+                   <div>
+                      <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">{t.profit}</p>
+                      <h3 className={`text-3xl font-black font-mono tracking-tighter ${hasPrice ? (isProfit ? 'text-green-400 drop-shadow-[0_0_10px_rgba(74,222,128,0.3)]' : 'text-red-400') : 'text-gray-600'}`}>
+                        {hasPrice ? `${isProfit ? '+' : ''}${symbolIcon} ${(totalProfit * rate).toLocaleString(undefined, {maximumFractionDigits: 0})}` : '--'}
+                      </h3>
+                   </div>
+                   <button onClick={() => handleAIAnalysis(group.symbol)} className="p-4 bg-indigo-600/10 text-indigo-400 rounded-2xl hover:bg-indigo-600 hover:text-white transition-all group-hover/card:scale-105 active:scale-95 shadow-lg border border-indigo-500/20">
+                     <Sparkles size={20} />
+                   </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 pt-2">
+                  <div className="bg-white/[0.03] p-3 rounded-2xl border border-white/5">
+                    <p className="text-[9px] text-gray-500 font-bold uppercase mb-1">{t.totalCost}</p>
+                    <p className="font-mono text-xs font-bold text-gray-300">{symbolIcon} {(totalInvested * rate).toLocaleString(undefined, {maximumFractionDigits: 0})}</p>
+                  </div>
+                  <div className="bg-white/[0.03] p-3 rounded-2xl border border-white/5">
+                    <p className="text-[9px] text-gray-500 font-bold uppercase mb-1">{t.marketValue}</p>
+                    <p className="font-mono text-xs font-bold text-gray-300">{hasPrice ? `${symbolIcon} ${(marketVal * rate).toLocaleString(undefined, {maximumFractionDigits: 0})}` : '--'}</p>
+                  </div>
+                </div>
               </div>
             </div>
           );
@@ -422,23 +434,30 @@ const Portfolio = memo(({ state, setState }: { state: AppState, setState: React.
         <div className="glass-effect rounded-[2rem] overflow-hidden border border-white/5">
           <table className="w-full text-left">
             <thead className="bg-white/[0.03] border-b border-white/5 text-[10px] uppercase tracking-widest opacity-60 font-black">
-              <tr><th className="px-8 py-5">日期</th><th className="px-8 py-5">商品</th><th className="px-8 py-5 text-right">成本</th><th className="px-8 py-5 text-right">數量</th><th className="px-8 py-5 text-center">操作</th></tr>
+              <tr><th className="px-8 py-5">日期</th><th className="px-8 py-5">商品</th><th className="px-8 py-5 text-right">入場價</th><th className="px-8 py-5 text-right">數量</th><th className="px-8 py-5 text-right">ROI%</th><th className="px-8 py-5 text-center">操作</th></tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {state.portfolio.map(item => (
-                <tr key={item.id} className="group/row hover:bg-white/[0.02] transition-colors">
-                  <td className="px-8 py-6 font-mono text-gray-400 text-xs">{item.buyDate}</td>
-                  <td className="px-8 py-6 font-black uppercase text-sm">{item.symbol}</td>
-                  <td className="px-8 py-6 font-mono text-right font-bold text-sm">{symbolIcon} {(item.cost * rate).toLocaleString()}</td>
-                  <td className="px-8 py-6 font-mono text-right opacity-60 text-sm">{item.quantity}</td>
-                  <td className="px-8 py-6">
-                    <div className="flex items-center justify-center gap-2 opacity-0 group-hover/row:opacity-100 transition-opacity">
-                      <button onClick={() => { setNewItem(item); setEditingId(item.id); setIsAdding(true); }} className="p-2 text-indigo-400 hover:bg-indigo-400/10 rounded-xl"><Edit3 size={16} /></button>
-                      <button onClick={() => setState(prev => ({ ...prev, portfolio: prev.portfolio.filter(p => p.id !== item.id) }))} className="p-2 text-red-500 hover:bg-red-500/10 rounded-xl"><Trash2 size={16} /></button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {state.portfolio.map(item => {
+                const livePrice = livePrices[item.symbol];
+                const roi = livePrice ? ((livePrice - item.cost) / item.cost) * 100 : 0;
+                return (
+                  <tr key={item.id} className="group/row hover:bg-white/[0.02] transition-colors">
+                    <td className="px-8 py-6 font-mono text-gray-400 text-xs">{item.buyDate}</td>
+                    <td className="px-8 py-6 font-black uppercase text-sm">{item.symbol}</td>
+                    <td className="px-8 py-6 font-mono text-right font-bold text-sm">{symbolIcon} {(item.cost * rate).toLocaleString()}</td>
+                    <td className="px-8 py-6 font-mono text-right opacity-60 text-sm">{item.quantity}</td>
+                    <td className={`px-8 py-6 font-mono text-right text-xs font-black ${livePrice ? (roi >= 0 ? 'text-green-400' : 'text-red-400') : 'text-gray-600'}`}>
+                      {livePrice ? `${roi >= 0 ? '+' : ''}${roi.toFixed(2)}%` : '--'}
+                    </td>
+                    <td className="px-8 py-6">
+                      <div className="flex items-center justify-center gap-2 opacity-0 group-hover/row:opacity-100 transition-opacity">
+                        <button onClick={() => { setNewItem(item); setEditingId(item.id); setIsAdding(true); }} className="p-2 text-indigo-400 hover:bg-indigo-400/10 rounded-xl"><Edit3 size={16} /></button>
+                        <button onClick={() => setState(prev => ({ ...prev, portfolio: prev.portfolio.filter(p => p.id !== item.id) }))} className="p-2 text-red-500 hover:bg-red-500/10 rounded-xl"><Trash2 size={16} /></button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
           {state.portfolio.length === 0 && <div className="py-20 text-center opacity-30 font-bold">尚未加入資產</div>}

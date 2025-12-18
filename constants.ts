@@ -22,11 +22,15 @@ export const TRANSLATIONS: Record<Language, any> = {
     quantity: 'Quantity',
     save: 'Save',
     cancel: 'Cancel',
+    delete: 'Delete',
+    actions: 'Actions',
     thinking: 'AI is analyzing market signals...',
     currency: 'Currency',
     lang: 'Language',
     placeholderSymbol: 'e.g. AAPL, BTCUSDT',
     detailedAnalysis: 'Master AI Report',
+    prevClose: 'Prev. Close',
+    marketClosed: 'Closed',
   },
   'zh-TW': {
     dashboard: '儀表板',
@@ -48,11 +52,15 @@ export const TRANSLATIONS: Record<Language, any> = {
     quantity: '數量',
     save: '儲存',
     cancel: '取消',
+    delete: '刪除',
+    actions: '動作',
     thinking: 'AI 正在分析市場信號...',
     currency: '貨幣',
     lang: '語言',
     placeholderSymbol: '例如 AAPL, BTCUSDT',
     detailedAnalysis: 'AI 大師詳細報告',
+    prevClose: '昨日收盤',
+    marketClosed: '休市中',
   }
 };
 

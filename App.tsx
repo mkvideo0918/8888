@@ -30,7 +30,8 @@ import {
   Users,
   Lock,
   ChevronDown,
-  Check
+  Check,
+  GripVertical
 } from 'lucide-react';
 import { AppState, Account, PortfolioItem, AssetMarket, Language, Currency } from './types';
 import { TRANSLATIONS, CURRENCY_SYMBOLS, EXCHANGE_RATES } from './constants';
@@ -44,7 +45,8 @@ const DEFAULT_ACCOUNT: Account = {
   portfolio: [],
   watchlist: ["BTCUSDT", "ETHUSDT", "NVDA", "CRCL", "TSLA", "AAPL"],
   currency: 'TWD',
-  language: 'zh-TW'
+  language: 'zh-TW',
+  assetOrder: []
 };
 
 const INITIAL_STATE: AppState = {
@@ -81,7 +83,6 @@ const Amount = memo(({ value, currency, rate, privacy, isProfit = false }: { val
   return <span className="font-mono">{isProfit && value > 0 ? '+' : ''}{symbol} {formatted}</span>;
 });
 
-// Added missing PriceDisplay component to fix 'Cannot find name PriceDisplay' error
 const PriceDisplay = memo(({ price, currencySymbol, rate, change }: { price: number; currencySymbol: string; rate: number; change: number; language: Language }) => {
   const isPositive = change >= 0;
   return (
@@ -106,21 +107,18 @@ const App = () => {
   const [unlockPassword, setUnlockPassword] = useState('');
   const [unlockError, setUnlockError] = useState(false);
 
-  // 當前活躍帳戶
   const activeAccount = useMemo(() => 
     state.accounts.find(a => a.id === state.activeAccountId) || state.accounts[0]
   , [state.accounts, state.activeAccountId]);
 
   const t = TRANSLATIONS[activeAccount.language];
 
-  // 持久化儲存
   useEffect(() => {
     localStorage.setItem('accounts', JSON.stringify(state.accounts));
     localStorage.setItem('activeAccountId', state.activeAccountId);
     localStorage.setItem('privacyMode', String(state.privacyMode));
   }, [state]);
 
-  // 獲取報價邏輯
   const fetchPrices = useCallback(async () => {
     const symbolsToFetch = new Set([...activeAccount.watchlist, ...activeAccount.portfolio.map(p => p.symbol)]);
     const results: Record<string, { price: number; change: number }> = {};
@@ -133,7 +131,6 @@ const App = () => {
           const data = await res.json();
           if (data.lastPrice) results[symbol] = { price: parseFloat(data.lastPrice), change: parseFloat(data.priceChangePercent) };
         } else {
-          // 針對組合中的市場自動獲取正確後綴
           const market = activeAccount.portfolio.find(p => p.symbol === symbol)?.market || 'US';
           const yahooTicker = getYahooTicker(symbol, market);
           const proxyUrl = "https://corsproxy.io/?";
@@ -156,7 +153,6 @@ const App = () => {
     return () => clearInterval(timer);
   }, [fetchPrices]);
 
-  // 帳戶切換邏輯
   const switchAccount = (id: string) => {
     const target = state.accounts.find(a => a.id === id);
     if (!target) return;
@@ -194,7 +190,6 @@ const App = () => {
             <h1 className="text-xl font-bold tracking-tight">WealthWise</h1>
           </div>
           
-          {/* 帳戶切換器 */}
           <button 
             onClick={() => setIsAccountModalOpen(true)}
             className="mb-8 flex items-center justify-between w-full p-4 bg-white/5 border border-white/10 rounded-2xl hover:bg-white/10 transition-all group"
@@ -240,12 +235,11 @@ const App = () => {
                {state.privacyMode ? t.privacyOn : t.privacyOff}
              </button>
              <div className="p-4 glass-effect rounded-2xl text-[9px] text-gray-600 uppercase tracking-[0.2em] text-center border border-white/5 font-black">
-               WealthWise v5.0 Multi-Account
+               WealthWise v5.1 Dynamic
              </div>
           </div>
         </div>
 
-        {/* 主內容區 */}
         <main className="flex-1 ml-64 p-10 min-h-screen relative overflow-x-hidden">
           <Routes>
             <Route path="/" element={<DashboardView state={state} setState={setState} prices={prices} activeAccount={activeAccount} />} />
@@ -254,7 +248,6 @@ const App = () => {
           </Routes>
         </main>
 
-        {/* 帳戶管理 Modal */}
         {isAccountModalOpen && (
           <div className="fixed inset-0 bg-black/90 backdrop-blur-xl z-[100] flex items-center justify-center p-6">
              <div className="glass-effect p-10 rounded-[2.5rem] w-full max-w-lg border border-white/10 relative">
@@ -336,7 +329,7 @@ const AccountCreationView = ({ onCancel, onSave, t }: { onCancel: () => void, on
       </div>
       <div className="grid grid-cols-2 gap-4 pt-4">
         <button onClick={onCancel} className="bg-white/5 py-4 rounded-2xl font-bold">{t.cancel}</button>
-        <button onClick={() => name && onSave({ id: Date.now().toString(), name, password: pwd || undefined, portfolio: [], watchlist: ["BTCUSDT", "NVDA"], currency: 'TWD', language: 'zh-TW' })} className="bg-indigo-600 py-4 rounded-2xl font-black">{t.save}</button>
+        <button onClick={() => name && onSave({ id: Date.now().toString(), name, password: pwd || undefined, portfolio: [], watchlist: ["BTCUSDT", "NVDA"], currency: 'TWD', language: 'zh-TW', assetOrder: [] })} className="bg-indigo-600 py-4 rounded-2xl font-black">{t.save}</button>
       </div>
     </div>
   );
@@ -463,6 +456,8 @@ const PortfolioView = memo(({ state, activeAccount, prices, setState }: any) => 
   const [editingItem, setEditingItem] = useState<any>(null);
   const [aiAnalysis, setAiAnalysis] = useState<any>(null);
   const [loadingAi, setLoadingAi] = useState(false);
+  const [draggedSymbol, setDraggedSymbol] = useState<string | null>(null);
+  
   const t = TRANSLATIONS[activeAccount.language];
   const rate = EXCHANGE_RATES[activeAccount.currency];
 
@@ -473,13 +468,40 @@ const PortfolioView = memo(({ state, activeAccount, prices, setState }: any) => 
       map[p.symbol].totalQty += p.quantity;
       map[p.symbol].totalCost += (p.cost * p.quantity);
     });
-    return Object.entries(map).map(([sym, data]) => ({
+
+    const items = Object.entries(map).map(([sym, data]) => ({
       symbol: sym,
       avgCost: data.totalCost / data.totalQty,
       totalQty: data.totalQty,
       market: data.market
     }));
-  }, [activeAccount.portfolio]);
+
+    // 應用自定義排序
+    const order = activeAccount.assetOrder || [];
+    if (order.length > 0) {
+      items.sort((a, b) => {
+        const idxA = order.indexOf(a.symbol);
+        const idxB = order.indexOf(b.symbol);
+        if (idxA === -1 && idxB === -1) return 0;
+        if (idxA === -1) return 1;
+        if (idxB === -1) return -1;
+        return idxA - idxB;
+      });
+    }
+    return items;
+  }, [activeAccount.portfolio, activeAccount.assetOrder]);
+
+  const totalAccountSummary = useMemo(() => {
+    let totalInvested = 0;
+    let totalMarketValue = 0;
+    aggregated.forEach(group => {
+      const live = prices[group.symbol]?.price || group.avgCost;
+      totalInvested += group.avgCost * group.totalQty;
+      totalMarketValue += live * group.totalQty;
+    });
+    const roi = totalInvested > 0 ? ((totalMarketValue - totalInvested) / totalInvested) * 100 : 0;
+    return { invested: totalInvested, market: totalMarketValue, roi };
+  }, [aggregated, prices]);
 
   const runAi = async (symbol: string) => {
     setLoadingAi(true);
@@ -492,15 +514,69 @@ const PortfolioView = memo(({ state, activeAccount, prices, setState }: any) => 
     finally { setLoadingAi(false); }
   };
 
+  // 拖拽處理邏輯
+  const handleDragStart = (symbol: string) => {
+    setDraggedSymbol(symbol);
+  };
+
+  const handleDragOver = (e: React.DragEvent, symbol: string) => {
+    e.preventDefault();
+    if (draggedSymbol === symbol) return;
+  };
+
+  const handleDrop = (e: React.DragEvent, targetSymbol: string) => {
+    e.preventDefault();
+    if (!draggedSymbol || draggedSymbol === targetSymbol) return;
+
+    const currentOrder = aggregated.map(i => i.symbol);
+    const fromIndex = currentOrder.indexOf(draggedSymbol);
+    const toIndex = currentOrder.indexOf(targetSymbol);
+
+    const newOrder = [...currentOrder];
+    newOrder.splice(fromIndex, 1);
+    newOrder.splice(toIndex, 0, draggedSymbol);
+
+    setState((prev: any) => ({
+      ...prev,
+      accounts: prev.accounts.map((a: Account) => 
+        a.id === activeAccount.id ? { ...a, assetOrder: newOrder } : a
+      )
+    }));
+    setDraggedSymbol(null);
+  };
+
   return (
     <div className="space-y-10 animate-in slide-in-from-bottom-4 duration-500 pb-20">
-      <div className="flex justify-between items-center">
-        <div><h2 className="text-3xl font-black">{t.portfolio}</h2><p className="text-xs text-gray-600 font-black uppercase tracking-[0.2em]">{activeAccount.name} Assets</p></div>
-        <button onClick={() => { setEditingItem(null); setIsAdding(true); }} className="bg-indigo-600 hover:bg-indigo-700 px-8 py-3 rounded-2xl flex items-center gap-2 font-black shadow-xl active:scale-95 transition-all"><Plus size={20} /> {t.addPortfolio}</button>
+      <div className="flex justify-between items-end">
+        <div>
+          <h2 className="text-3xl font-black">{t.portfolio}</h2>
+          <p className="text-xs text-gray-600 font-black uppercase tracking-[0.2em]">{activeAccount.name} Assets</p>
+        </div>
+        
+        {/* 帳戶總盈虧比統計 */}
+        <div className="flex items-center gap-6 glass-effect p-6 rounded-3xl border border-white/5">
+           <div>
+              <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mb-1">Account ROI%</p>
+              <div className={`text-2xl font-black tracking-tighter flex items-center gap-2 ${totalAccountSummary.roi >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                {totalAccountSummary.roi >= 0 ? <ArrowUpRight size={24} /> : <ArrowDownRight size={24} />}
+                {state.privacyMode ? <span className="opacity-50">****</span> : `${totalAccountSummary.roi.toFixed(2)}%`}
+              </div>
+           </div>
+           <div className="w-px h-10 bg-white/5 mx-2"></div>
+           <div>
+              <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mb-1">{t.totalValue}</p>
+              <div className="text-xl font-black font-mono">
+                <Amount value={totalAccountSummary.market} currency={activeAccount.currency} rate={rate} privacy={state.privacyMode} />
+              </div>
+           </div>
+           <button onClick={() => { setEditingItem(null); setIsAdding(true); }} className="bg-indigo-600 hover:bg-indigo-700 w-12 h-12 rounded-2xl flex items-center justify-center font-black shadow-xl active:scale-95 transition-all ml-4">
+             <Plus size={24} />
+           </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-        {aggregated.map(group => {
+        {aggregated.map((group, index) => {
           const live = prices[group.symbol]?.price;
           const hasPrice = live !== undefined;
           const roi = hasPrice ? ((live - group.avgCost) / group.avgCost) * 100 : 0;
@@ -508,12 +584,24 @@ const PortfolioView = memo(({ state, activeAccount, prices, setState }: any) => 
           const isProfit = profit >= 0;
 
           return (
-            <div key={group.symbol} className="glass-effect p-8 rounded-[2.5rem] border border-white/10 space-y-6 group/card hover:border-indigo-500/50 transition-all shadow-2xl relative overflow-hidden">
+            <div 
+              key={group.symbol} 
+              draggable
+              onDragStart={() => handleDragStart(group.symbol)}
+              onDragOver={(e) => handleDragOver(e, group.symbol)}
+              onDrop={(e) => handleDrop(e, group.symbol)}
+              className={`glass-effect p-8 rounded-[2.5rem] border space-y-6 group/card hover:border-indigo-500/50 transition-all shadow-2xl relative overflow-hidden cursor-move ${draggedSymbol === group.symbol ? 'opacity-20 scale-95' : 'opacity-100 border-white/10'}`}
+            >
                {isProfit && hasPrice && <div className="absolute -right-8 -top-8 w-24 h-24 bg-green-500/5 blur-3xl pointer-events-none group-hover:bg-green-500/10 transition-all"></div>}
                
                <div className="flex justify-between items-start">
                   <div className="flex gap-3">
-                    <div className="w-14 h-14 bg-white/5 rounded-2xl flex items-center justify-center font-black text-xl text-indigo-400 border border-white/5">{group.symbol.slice(0,2)}</div>
+                    <div className="w-14 h-14 bg-white/5 rounded-2xl flex items-center justify-center font-black text-xl text-indigo-400 border border-white/5 relative">
+                      {group.symbol.slice(0,2)}
+                      <div className="absolute -top-1 -left-1 opacity-0 group-hover/card:opacity-100 transition-opacity bg-indigo-600 rounded-lg p-1">
+                        <GripVertical size={12} className="text-white" />
+                      </div>
+                    </div>
                     <div>
                       <h4 className="text-2xl font-black tracking-tighter flex items-center gap-2">{group.symbol}</h4>
                       <p className="text-[10px] text-gray-600 uppercase font-black tracking-widest">{group.totalQty} Units</p>
@@ -553,7 +641,6 @@ const PortfolioView = memo(({ state, activeAccount, prices, setState }: any) => 
         })}
       </div>
 
-      {/* 明細表格 */}
       <div className="space-y-4">
         <h3 className="text-lg font-black flex items-center gap-2 px-2"><Activity size={18} className="text-indigo-400" /> Transaction Batches</h3>
         <div className="glass-effect rounded-[2.5rem] overflow-hidden border border-white/5">
@@ -585,7 +672,6 @@ const PortfolioView = memo(({ state, activeAccount, prices, setState }: any) => 
         </div>
       </div>
 
-      {/* 新增/編輯視窗 */}
       {isAdding && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[120] flex items-center justify-center p-4">
            <div className="glass-effect p-10 rounded-[2.5rem] w-full max-w-lg space-y-6 border border-white/10">
@@ -635,7 +721,6 @@ const PortfolioView = memo(({ state, activeAccount, prices, setState }: any) => 
         </div>
       )}
 
-      {/* AI 分析彈窗 */}
       {aiAnalysis && (
         <div className="fixed inset-0 bg-black/95 backdrop-blur-xl z-[150] flex items-center justify-center p-6 overflow-y-auto">
           <div className="glass-effect p-10 rounded-[2.5rem] w-full max-w-2xl border border-indigo-500/30 relative">

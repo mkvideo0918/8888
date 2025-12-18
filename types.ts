@@ -21,6 +21,7 @@ export interface Account {
   watchlist: string[];
   currency: Currency;
   language: Language;
+  assetOrder?: string[]; // 儲存資產代碼的排序順序
 }
 
 export interface AppState {

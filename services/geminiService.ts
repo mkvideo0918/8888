@@ -1,35 +1,16 @@
 
 import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
 
-// 初始化 Gemini 並配置專業金融大師指令
+// 基礎分析：生成結構化報告
 export const analyzeMarket = async (symbol: string, language: string) => {
-  // 每次調用時創建實例以獲取最新的 API Key
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  
   const isChinese = language === 'zh-TW';
   
   const systemInstruction = `
     你是一位擁有 30 年華爾街經驗的「全球首席金融策略大師」(Global Chief Strategy Officer)。
-    
-    你的任務：
-    1. 以極其專業、冷靜且深具洞察力的口吻，分析資產：${symbol}。
-    2. 你擁有對當前市場大數據的即時判讀能力，請根據該資產的特性進行全方位診斷。
-    3. 報告結構必須包含：
-       - 【市場情緒總覽】：當前市場參與者的心理與行為分析。
-       - 【核心技術面解析】：K 線形態、支撐/阻力、量價關係判斷。
-       - 【宏觀與基本面】：近期可能影響走勢的關鍵新聞與宏觀催化劑。
-       - 【風險策略】：給予投資者的風控建議。
-       - 【大師決策】：Buy (買入), Hold (持有), Sell (賣出), Neutral (觀望)。
-    
-    關於「市場恐慌貪婪指數」(0-100)：
-    - 0-25: 極度恐慌 (Extreme Fear)
-    - 26-45: 恐慌 (Fear)
-    - 46-55: 中性 (Neutral)
-    - 56-75: 貪婪 (Greed)
-    - 76-100: 極度貪婪 (Extreme Greed)
-    
-    請使用 ${isChinese ? '繁體中文' : 'English'} 撰寫報告。
-    嚴格遵守 JSON 格式輸出，不要包含額外的說明文字或 Markdown 代碼塊標籤。
+    你的任務：對資產 ${symbol} 進行深度診斷。
+    輸出結構必須嚴格遵守 JSON，包含 summary, recommendation, detailedAnalysis, sentimentScore, sentimentLabel, keyLevels。
+    語言：${isChinese ? '繁體中文' : 'English'}。
   `;
 
   try {
@@ -42,36 +23,55 @@ export const analyzeMarket = async (symbol: string, language: string) => {
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            summary: { type: Type.STRING, description: "一句話精煉總結" },
+            summary: { type: Type.STRING },
             recommendation: { type: Type.STRING, enum: ['Buy', 'Hold', 'Sell', 'Neutral'] },
-            detailedAnalysis: { type: Type.STRING, description: "包含大標題的專業詳細分析正文" },
-            sentimentScore: { type: Type.INTEGER, description: "0-100 的市場情緒分數" },
-            sentimentLabel: { type: Type.STRING, description: "對應分數的情緒標籤" },
-            keyLevels: { 
-              type: Type.ARRAY, 
-              items: { type: Type.STRING },
-              description: "當前關鍵支撐位與阻力位 (3-4 個)"
-            }
+            detailedAnalysis: { type: Type.STRING },
+            sentimentScore: { type: Type.INTEGER },
+            sentimentLabel: { type: Type.STRING },
+            keyLevels: { type: Type.ARRAY, items: { type: Type.STRING } }
           },
           required: ['summary', 'recommendation', 'detailedAnalysis', 'sentimentScore', 'sentimentLabel', 'keyLevels']
         }
       }
     });
 
-    const text = response.text;
-    if (!text) throw new Error("AI 輸出內容為空");
-    
-    return JSON.parse(text.trim());
+    return JSON.parse(response.text.trim());
   } catch (error) {
-    console.error("Gemini Analysis Error:", error);
-    // 返回一個降級的錯誤提示對象，防止 UI 崩潰
-    return {
-      summary: "分析引擎暫時無法獲取數據",
-      recommendation: "Neutral",
-      detailedAnalysis: "抱歉，目前 AI 分析引擎遭遇連線問題或額度限制，請稍後再試。您可以查看 TradingView 圖表進行判斷。",
-      sentimentScore: 50,
-      sentimentLabel: "Data Error",
-      keyLevels: ["N/A"]
-    };
+    console.error("Analysis Error:", error);
+    return null;
+  }
+};
+
+// 對話功能：與 AI 大師即時交談
+export const getChatResponse = async (symbol: string, history: any[], message: string, language: string) => {
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const isChinese = language === 'zh-TW';
+
+  const systemInstruction = `
+    你是一位擁有 30 年華爾街經驗的「全球首席金融策略大師」。
+    當前正在與客戶討論資產：${symbol}。
+    你的回答必須具備：
+    1. 專業度：使用正確的金融術語（如：超買、背離、流動性壓力、通膨預期等）。
+    2. 深度：不只是回答表面，要分析背後的經濟邏輯。
+    3. 語氣：冷靜、優雅、自信、大師風範。
+    4. 語言：必須使用${isChinese ? '繁體中文' : 'English'}。
+    5. 限制：不要給予具體的財務建議，只提供分析觀點。
+  `;
+
+  try {
+    const chat = ai.chats.create({
+      model: 'gemini-3-flash-preview',
+      config: { systemInstruction },
+      history: history.map(m => ({
+        role: m.role,
+        parts: [{ text: m.text }]
+      }))
+    });
+
+    const response = await chat.sendMessage({ message });
+    return response.text;
+  } catch (error) {
+    console.error("Chat Error:", error);
+    return isChinese ? "抱歉，大師目前忙碌中，請稍後再試。" : "Sorry, the Master is currently busy. Please try again later.";
   }
 };

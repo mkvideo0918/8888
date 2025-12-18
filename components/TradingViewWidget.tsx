@@ -9,52 +9,51 @@ declare const TradingView: any;
 
 const TradingViewWidget: React.FC<Props> = ({ symbol }) => {
   const container = useRef<HTMLDivElement>(null);
-  const widgetRef = useRef<any>(null);
+  const currentSymbolRef = useRef<string>('');
 
   useEffect(() => {
-    const containerId = `tradingview_${symbol.replace(/[^a-zA-Z0-9]/g, '')}`;
+    // 防止重複初始化相同的 symbol
+    if (currentSymbolRef.current === symbol) return;
+    currentSymbolRef.current = symbol;
+
+    const containerId = `tv_chart_${Math.random().toString(36).substring(7)}`;
     
-    // 清理舊的 widget 實例
     if (container.current) {
       container.current.innerHTML = `<div id="${containerId}" style="height: 500px; width: 100%;"></div>`;
     }
 
-    if (typeof TradingView !== 'undefined') {
-      try {
-        widgetRef.current = new TradingView.widget({
-          width: '100%',
-          height: '500',
-          symbol: symbol.includes('/') ? symbol.replace('/', '') : symbol,
+    const initWidget = () => {
+      if (typeof TradingView !== 'undefined' && container.current) {
+        new TradingView.widget({
+          autosize: true,
+          symbol: symbol.includes('USDT') ? `BINANCE:${symbol}` : symbol,
           interval: 'D',
           timezone: 'Etc/UTC',
           theme: 'dark',
           style: '1',
-          locale: 'en',
+          locale: 'zh_TW',
           toolbar_bg: '#f1f3f6',
           enable_publishing: false,
-          hide_top_toolbar: false,
-          save_image: false,
+          hide_side_toolbar: false,
+          allow_symbol_change: true,
           container_id: containerId,
         });
-      } catch (e) {
-        console.error("TradingView initialization failed:", e);
       }
-    }
+    };
+
+    // 給予 DOM 一點點緩衝時間，確保容器已就緒
+    const timer = setTimeout(initWidget, 50);
 
     return () => {
-      // 組件卸載或 symbol 改變時的清理
-      if (widgetRef.current) {
-        widgetRef.current = null;
-      }
+      clearTimeout(timer);
     };
   }, [symbol]);
 
   return (
-    <div className="w-full rounded-xl overflow-hidden glass-effect border border-white/5 shadow-2xl">
-      <div ref={container} className="w-full h-[500px]" />
+    <div className="w-full rounded-2xl overflow-hidden glass-effect border border-white/10 shadow-2xl h-[500px]">
+      <div ref={container} className="w-full h-full" />
     </div>
   );
 };
 
-// 使用 memo 防止父組件無關更新導致重新渲染
 export default memo(TradingViewWidget);

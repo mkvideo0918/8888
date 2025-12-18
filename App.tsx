@@ -26,7 +26,8 @@ import {
   Clock,
   Gauge,
   RefreshCw,
-  AlertCircle
+  AlertCircle,
+  Loader2
 } from 'lucide-react';
 import { AppState, Language, Currency, PortfolioItem, AnalysisHistory } from './types';
 import { TRANSLATIONS, CURRENCY_SYMBOLS, EXCHANGE_RATES } from './constants';
@@ -35,13 +36,7 @@ import FearGreedIndex from './components/FearGreedIndex';
 import { analyzeMarket, getChatResponseStream, getFearGreedIndices } from './services/geminiService';
 
 const STOCK_BASE_PRICES: Record<string, number> = {
-  'AAPL': 231.54,
-  'NVDA': 140.22, 
-  'TSLA': 467.24, 
-  'MSFT': 420.12,
-  'GOOGL': 188.44,
-  'AMZN': 210.35,
-  'META': 585.10
+  'AAPL': 231.54, 'NVDA': 140.22, 'TSLA': 467.24, 'MSFT': 420.12, 'GOOGL': 188.44, 'AMZN': 210.35, 'META': 585.10
 };
 
 const INITIAL_STATE: AppState = {
@@ -83,17 +78,12 @@ const PriceDisplay = memo(({ price, currencySymbol, rate, change, isMarketClosed
   return (
     <div className={`flex flex-col items-end transition-colors duration-1000 ${flash === 'up' ? 'text-green-400' : flash === 'down' ? 'text-red-400' : ''}`}>
       <div className="text-xl font-mono font-black tracking-tighter flex items-center gap-2">
-        {isMarketClosed && (
-          <div className="flex flex-col items-end mr-1">
-            <span className="text-[9px] text-gray-500 font-bold uppercase tracking-tighter leading-none mb-0.5">{t.prevClose}</span>
-            <Clock size={10} className="text-gray-500/50" />
-          </div>
-        )}
+        {isMarketClosed && <Clock size={10} className="text-gray-500/50" />}
         {currencySymbol} {(price * rate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
       </div>
       <div className={`text-[10px] font-bold flex items-center gap-1 ${isMarketClosed ? 'text-gray-500/70' : (change >= 0 ? 'text-green-400' : 'text-red-400')}`}>
-        {!isMarketClosed && (change >= 0 ? <TrendingUp size={10} /> : <TrendingDown size={10} />)}
-        {isMarketClosed ? '0.00%' : `${Math.abs(change).toFixed(2)}%`}
+        {isMarketClosed ? t.prevClose : (change >= 0 ? <TrendingUp size={10} /> : <TrendingDown size={10} />)}
+        {isMarketClosed ? '' : `${Math.abs(change).toFixed(2)}%`}
       </div>
     </div>
   );
@@ -129,7 +119,7 @@ const Sidebar = memo(({ language }: { language: Language }) => {
           );
         })}
       </nav>
-      <div className="mt-auto p-4 glass-effect rounded-2xl text-[10px] text-gray-500 uppercase tracking-[0.2em] text-center border border-white/5">Master Insight Engine v2.0</div>
+      <div className="mt-auto p-4 glass-effect rounded-2xl text-[10px] text-gray-500 uppercase tracking-[0.2em] text-center border border-white/5">Master Engine v2.1</div>
     </div>
   );
 });
@@ -158,36 +148,38 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
-  const fetchFearGreedData = useCallback(async () => {
-    if (isFetchingFNG) return;
+  const fetchFearGreedData = useCallback(async (retryCount = 0) => {
+    if (isFetchingFNG && retryCount === 0) return;
     setIsFetchingFNG(true);
     setFngError(false);
     try {
       const results = await getFearGreedIndices(state.language);
-      if (results) {
-        if (results.stock) {
-          setStockSentiment(results.stock);
-          localStorage.setItem('cache_fng_stock', JSON.stringify(results.stock));
-        }
-        if (results.crypto) {
-          setCryptoSentiment(results.crypto);
-          localStorage.setItem('cache_fng_crypto', JSON.stringify(results.crypto));
-        }
+      if (results && results.stock && results.crypto) {
+        setStockSentiment(results.stock);
+        setCryptoSentiment(results.crypto);
+        localStorage.setItem('cache_fng_stock', JSON.stringify(results.stock));
+        localStorage.setItem('cache_fng_crypto', JSON.stringify(results.crypto));
+        setFngError(false);
+      } else {
+        throw new Error("Empty results");
       }
     } catch (e) {
-      setFngError(true);
+      console.error("F&G Fetch Error:", e);
+      if (retryCount < 2) {
+        setTimeout(() => fetchFearGreedData(retryCount + 1), 3000);
+      } else {
+        setFngError(true);
+      }
     } finally {
       setIsFetchingFNG(false);
     }
   }, [state.language, isFetchingFNG]);
 
   useEffect(() => {
-    if (!stockSentiment || !cryptoSentiment) {
-      fetchFearGreedData();
-    }
-    const interval = setInterval(fetchFearGreedData, 3600000); 
+    fetchFearGreedData();
+    const interval = setInterval(fetchFearGreedData, 1800000); // 30 mins
     return () => clearInterval(interval);
-  }, [fetchFearGreedData, stockSentiment, cryptoSentiment]);
+  }, []);
 
   const fetchAllPrices = useCallback(async () => {
     const isCurrentlyOpen = isUSMarketOpen();
@@ -223,6 +215,7 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
   }, [fetchAllPrices]);
 
   const handleDeepAnalysis = async () => {
+    if (isAnalyzing) return;
     setIsAnalyzing(true);
     setMessages([]);
     try {
@@ -241,7 +234,6 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
     const userMsg = inputValue.trim();
     setInputValue('');
     
-    // 立即顯示用戶訊息並建立一個空的模型訊息用於串流
     setMessages(prev => [
       ...prev, 
       { role: 'user', text: userMsg },
@@ -250,7 +242,6 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
     
     setIsAnalyzing(true);
     
-    // 使用串流 API
     await getChatResponseStream(activeSymbol, messages, userMsg, state.language, (streamedText) => {
       setMessages(prev => {
         const newMessages = [...prev];
@@ -270,7 +261,7 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
   const isActiveCrypto = /USDT$|USDC$|BUSD$|BTC$|ETH$/.test(activeSymbol);
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500">
+    <div className="space-y-8 animate-in fade-in duration-500 pb-20">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
           <div className="flex items-center justify-between bg-white/[0.02] p-4 rounded-2xl border border-white/5 relative">
@@ -309,11 +300,11 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
             <div className="space-y-2 relative group">
               <div className="flex items-center justify-between px-1">
                 <div className="flex items-center gap-1">
-                  <h3 className="text-[9px] font-bold opacity-60 uppercase tracking-tighter">US Stock (CNN)</h3>
+                  <h3 className="text-[9px] font-bold opacity-60 uppercase tracking-tighter">US Stocks</h3>
                   {fngError && <AlertCircle size={8} className="text-red-500 animate-pulse" />}
                 </div>
                 <button 
-                  onClick={fetchFearGreedData} 
+                  onClick={() => fetchFearGreedData()} 
                   disabled={isFetchingFNG}
                   className={`p-1 hover:bg-white/10 rounded transition-colors ${isFetchingFNG ? 'animate-spin' : ''}`}
                 >
@@ -322,7 +313,7 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
               </div>
               <FearGreedIndex 
                 value={stockSentiment?.score ?? 0} 
-                label={stockSentiment?.label ?? (fngError ? 'Fetch Failed' : 'Loading...')} 
+                label={isFetchingFNG && !stockSentiment ? 'Loading...' : (stockSentiment?.label ?? (fngError ? 'Fetch Failed' : '...'))} 
                 isAnalyzing={isFetchingFNG} 
                 compact 
               />
@@ -330,11 +321,11 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
             <div className="space-y-2 relative group">
               <div className="flex items-center justify-between px-1">
                 <div className="flex items-center gap-1">
-                  <h3 className="text-[9px] font-bold opacity-60 uppercase tracking-tighter">Crypto (Coinglass)</h3>
+                  <h3 className="text-[9px] font-bold opacity-60 uppercase tracking-tighter">Crypto</h3>
                   {fngError && <AlertCircle size={8} className="text-red-500 animate-pulse" />}
                 </div>
                 <button 
-                  onClick={fetchFearGreedData} 
+                  onClick={() => fetchFearGreedData()} 
                   disabled={isFetchingFNG}
                   className={`p-1 hover:bg-white/10 rounded transition-colors ${isFetchingFNG ? 'animate-spin' : ''}`}
                 >
@@ -343,7 +334,7 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
               </div>
               <FearGreedIndex 
                 value={cryptoSentiment?.score ?? 0} 
-                label={cryptoSentiment?.label ?? (fngError ? 'Fetch Failed' : 'Loading...')} 
+                label={isFetchingFNG && !cryptoSentiment ? 'Loading...' : (cryptoSentiment?.label ?? (fngError ? 'Fetch Failed' : '...'))} 
                 isAnalyzing={isFetchingFNG} 
                 compact 
               />
@@ -353,11 +344,13 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
           <div className="glass-effect rounded-2xl flex flex-col h-[400px] border border-white/10 relative overflow-hidden shadow-xl">
             <div className="p-4 border-b border-white/10 flex items-center justify-between bg-white/[0.02]">
               <div className="flex items-center gap-2"><ShieldCheck size={18} className="text-blue-400" /><h3 className="text-sm font-bold tracking-wide uppercase">{t.aiAnalyst}</h3></div>
-              <button onClick={handleDeepAnalysis} disabled={isAnalyzing} className="text-[10px] bg-blue-600/20 text-blue-400 px-3 py-1 rounded-full border border-blue-500/30 hover:bg-blue-600/40 transition-all font-bold">{t.analyze}</button>
+              <button onClick={handleDeepAnalysis} disabled={isAnalyzing} className="text-[10px] bg-blue-600/20 text-blue-400 px-3 py-1 rounded-full border border-blue-500/30 hover:bg-blue-600/40 transition-all font-bold flex items-center gap-2">
+                {isAnalyzing ? <Loader2 size={10} className="animate-spin" /> : null} {t.analyze}
+              </button>
             </div>
             <div className="flex-1 p-4 overflow-y-auto custom-scrollbar space-y-4">
               {messages.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-center opacity-40 px-6"><Bot size={48} className="mb-4 text-gray-500" /><p className="text-sm font-medium">我是您的 AI 策略大師</p><p className="text-[11px] mt-2">點擊上方「分析」獲取基於 TradingView 的最新報告。</p></div>
+                <div className="flex flex-col items-center justify-center h-full text-center opacity-40 px-6"><Bot size={48} className="mb-4 text-gray-500" /><p className="text-sm font-medium">我是您的 AI 策略大師</p><p className="text-[11px] mt-2">點擊上方「分析」獲取最新報告。</p></div>
               ) : (
                 messages.map((m, i) => (
                   <div key={i} className={`flex flex-col gap-2 ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
@@ -374,10 +367,10 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
               {isAnalyzing && messages.length > 0 && !messages[messages.length-1].text && (
                 <div className="flex justify-start">
                   <div className="bg-white/5 border border-white/10 rounded-2xl p-3 flex items-center gap-2">
-                    <div className="flex gap-1 animate-bounce">
-                      <div className="w-1 h-1 bg-blue-400 rounded-full"></div>
-                      <div className="w-1 h-1 bg-blue-400 rounded-full" style={{animationDelay: '0.2s'}}></div>
-                      <div className="w-1 h-1 bg-blue-400 rounded-full" style={{animationDelay: '0.4s'}}></div>
+                    <div className="flex gap-1 animate-pulse">
+                      <div className="w-1.5 h-1.5 bg-blue-400 rounded-full"></div>
+                      <div className="w-1.5 h-1.5 bg-blue-400 rounded-full" style={{animationDelay: '0.2s'}}></div>
+                      <div className="w-1.5 h-1.5 bg-blue-400 rounded-full" style={{animationDelay: '0.4s'}}></div>
                     </div>
                   </div>
                 </div>

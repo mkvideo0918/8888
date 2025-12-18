@@ -11,22 +11,20 @@ export interface PortfolioItem {
   buyDate: string;
   cost: number;
   quantity: number;
-  currentPrice?: number;
 }
 
-export interface AnalysisHistory {
+export interface Account {
   id: string;
-  symbol: string;
-  timestamp: number;
-  summary: string;
-  recommendation: 'Buy' | 'Hold' | 'Sell' | 'Neutral';
-  detailedAnalysis: string;
+  name: string;
+  password?: string;
+  portfolio: PortfolioItem[];
+  watchlist: string[];
+  currency: Currency;
+  language: Language;
 }
 
 export interface AppState {
-  language: Language;
-  currency: Currency;
-  portfolio: PortfolioItem[];
-  history: AnalysisHistory[];
-  watchlist: string[];
+  accounts: Account[];
+  activeAccountId: string;
+  privacyMode: boolean;
 }

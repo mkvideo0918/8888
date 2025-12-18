@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback, memo, useMemo, useRef } from '
 import * as ReactRouterDOM from 'react-router-dom';
 import { GoogleGenAI } from "@google/genai";
 
-const { HashRouter, Routes, Route, Link, useLocation } = ReactRouterDOM as any;
+const { HashRouter, Routes, Route, Link, useLocation, useNavigate } = ReactRouterDOM as any;
 
 import { 
   LayoutDashboard, 
@@ -13,34 +13,44 @@ import {
   Plus, 
   TrendingUp, 
   TrendingDown,
-  Zap,
-  User,
   Trash2,
   X,
-  Clock,
   RefreshCw,
   PieChart,
   BarChart3,
   Activity,
   Edit3,
   Sparkles,
-  ChevronRight,
   BrainCircuit,
   AlertCircle,
   ArrowUpRight,
-  ArrowDownRight
+  ArrowDownRight,
+  Eye,
+  EyeOff,
+  Users,
+  Lock,
+  ChevronDown,
+  Check
 } from 'lucide-react';
-import { AppState, Language, Currency, PortfolioItem, AssetMarket } from './types';
+import { AppState, Account, PortfolioItem, AssetMarket, Language, Currency } from './types';
 import { TRANSLATIONS, CURRENCY_SYMBOLS, EXCHANGE_RATES } from './constants';
 import TradingViewWidget from './components/TradingViewWidget';
 import FearGreedIndex from './components/FearGreedIndex';
 
-const INITIAL_STATE: AppState = {
-  language: 'zh-TW',
+// 初始化數據
+const DEFAULT_ACCOUNT: Account = {
+  id: 'default',
+  name: 'Main Wallet',
+  portfolio: [],
+  watchlist: ["BTCUSDT", "ETHUSDT", "NVDA", "CRCL", "TSLA", "AAPL"],
   currency: 'TWD',
-  portfolio: JSON.parse(localStorage.getItem('portfolio') || '[]'),
-  history: [],
-  watchlist: JSON.parse(localStorage.getItem('watchlist') || '["BTCUSDT", "ETHUSDT", "NVDA", "CRCL", "TSLA", "AAPL"]'),
+  language: 'zh-TW'
+};
+
+const INITIAL_STATE: AppState = {
+  accounts: JSON.parse(localStorage.getItem('accounts') || `[${JSON.stringify(DEFAULT_ACCOUNT)}]`),
+  activeAccountId: localStorage.getItem('activeAccountId') || 'default',
+  privacyMode: localStorage.getItem('privacyMode') === 'true',
 };
 
 const getYahooTicker = (symbol: string, market: AssetMarket) => {
@@ -56,171 +66,388 @@ const getYahooTicker = (symbol: string, market: AssetMarket) => {
 
 const isUSMarketOpen = () => {
   const now = new Date();
-  const estOffset = -5; 
-  const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
-  const estDate = new Date(utc + (3600000 * estOffset));
+  const estDate = new Date(now.toLocaleString("en-US", {timeZone: "America/New_York"}));
   const day = estDate.getDay();
   const hours = estDate.getHours();
   const time = hours * 100 + estDate.getMinutes();
   return day !== 0 && day !== 6 && time >= 930 && time <= 1600;
 };
 
-const PriceDisplay = memo(({ price, currencySymbol, rate, change, isMarketClosed, language }: { price: number; currencySymbol: string; rate: number; change: number; isMarketClosed?: boolean, language: Language }) => {
-  const t = TRANSLATIONS[language];
+// 隱私遮罩組件
+const Amount = memo(({ value, currency, rate, privacy, isProfit = false }: { value: number; currency: Currency; rate: number; privacy: boolean; isProfit?: boolean }) => {
+  if (privacy) return <span className="font-mono opacity-50">****</span>;
+  const symbol = CURRENCY_SYMBOLS[currency];
+  const formatted = (value * rate).toLocaleString(undefined, { maximumFractionDigits: isProfit ? 0 : 2 });
+  return <span className="font-mono">{isProfit && value > 0 ? '+' : ''}{symbol} {formatted}</span>;
+});
+
+// Added missing PriceDisplay component to fix 'Cannot find name PriceDisplay' error
+const PriceDisplay = memo(({ price, currencySymbol, rate, change }: { price: number; currencySymbol: string; rate: number; change: number; language: Language }) => {
+  const isPositive = change >= 0;
   return (
-    <div className="flex flex-col items-end">
-      <div className="text-xl font-mono font-black tracking-tighter">
+    <div className="text-right">
+      <div className="text-2xl font-black tracking-tighter font-mono flex items-center justify-end">
         {currencySymbol} {(price * rate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
       </div>
-      <div className={`text-[10px] font-bold flex items-center gap-1 ${isMarketClosed ? 'text-gray-500' : (change >= 0 ? 'text-green-400' : 'text-red-400')}`}>
-        {isMarketClosed ? t.prevClose : (change >= 0 ? <TrendingUp size={10} /> : <TrendingDown size={10} />)}
-        {isMarketClosed ? '' : `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`}
+      <div className={`text-[10px] font-black flex items-center justify-end gap-1 ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
+        {isPositive ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+        {isPositive ? '+' : ''}{change.toFixed(2)}%
       </div>
     </div>
   );
 });
 
-const Sidebar = memo(({ language }: { language: Language }) => {
-  const t = TRANSLATIONS[language];
-  const location = useLocation();
-  const menuItems = useMemo(() => [
-    { name: t.dashboard, path: '/', icon: LayoutDashboard },
-    { name: t.portfolio, path: '/portfolio', icon: Wallet },
-    { name: t.settings, path: '/settings', icon: SettingsIcon },
-  ], [t]);
-
-  return (
-    <div className="w-64 h-screen fixed left-0 top-0 glass-effect border-r border-white/10 p-6 flex flex-col z-50">
-      <div className="flex items-center gap-3 mb-10 px-2">
-        <div className="w-10 h-10 bg-gradient-to-br from-indigo-600 to-blue-700 rounded-lg flex items-center justify-center shadow-lg shadow-blue-600/20">
-          <TrendingUp className="w-6 h-6 text-white" />
-        </div>
-        <h1 className="text-xl font-bold tracking-tight">WealthWise</h1>
-      </div>
-      <nav className="flex-1 space-y-2">
-        {menuItems.map((item) => {
-          const Icon = item.icon;
-          const isActive = location.pathname === item.path;
-          return (
-            <Link key={item.path} to={item.path} className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all group ${isActive ? 'bg-indigo-600 text-white shadow-md' : 'hover:bg-white/5 text-gray-400 hover:text-white'}`}>
-              <Icon size={18} />
-              <span className="font-medium text-sm">{item.name}</span>
-            </Link>
-          );
-        })}
-      </nav>
-      <div className="mt-auto p-4 glass-effect rounded-2xl text-[10px] text-gray-500 uppercase tracking-widest text-center border border-white/5">v4.7 Portfolio Pro</div>
-    </div>
-  );
-});
-
-const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.Dispatch<React.SetStateAction<AppState>> }) => {
-  const [activeSymbol, setActiveSymbol] = useState(state.watchlist[0]);
+const App = () => {
+  const [state, setState] = useState<AppState>(INITIAL_STATE);
   const [prices, setPrices] = useState<Record<string, { price: number; change: number }>>({});
-  const [marketOpen, setMarketOpen] = useState(isUSMarketOpen());
-  const [fngData, setFngData] = useState<{stock: {score: number, label: string}, crypto: {score: number, label: string}, loading: boolean}>({
-    stock: { score: 55, label: 'Neutral' },
-    crypto: { score: 50, label: 'Neutral' },
-    loading: true
-  });
-  
-  const t = TRANSLATIONS[state.language];
+  const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
+  const [isCreatingAccount, setIsCreatingAccount] = useState(false);
+  const [pendingAccountId, setPendingAccountId] = useState<string | null>(null);
+  const [unlockPassword, setUnlockPassword] = useState('');
+  const [unlockError, setUnlockError] = useState(false);
 
-  const fetchFNG = useCallback(async () => {
-    try {
-      const cryptoRes = await fetch('https://api.alternative.me/fng/');
-      const cryptoJson = await cryptoRes.json();
-      setFngData({
-        crypto: { score: parseInt(cryptoJson.data[0].value), label: cryptoJson.data[0].value_classification },
-        stock: { score: 45 + Math.floor(Math.random() * 20), label: 'Neutral' },
-        loading: false
-      });
-    } catch (e) { setFngData(prev => ({ ...prev, loading: false })); }
-  }, []);
+  // 當前活躍帳戶
+  const activeAccount = useMemo(() => 
+    state.accounts.find(a => a.id === state.activeAccountId) || state.accounts[0]
+  , [state.accounts, state.activeAccountId]);
 
-  const fetchAllPrices = useCallback(async () => {
-    setMarketOpen(isUSMarketOpen());
+  const t = TRANSLATIONS[activeAccount.language];
+
+  // 持久化儲存
+  useEffect(() => {
+    localStorage.setItem('accounts', JSON.stringify(state.accounts));
+    localStorage.setItem('activeAccountId', state.activeAccountId);
+    localStorage.setItem('privacyMode', String(state.privacyMode));
+  }, [state]);
+
+  // 獲取報價邏輯
+  const fetchPrices = useCallback(async () => {
+    const symbolsToFetch = new Set([...activeAccount.watchlist, ...activeAccount.portfolio.map(p => p.symbol)]);
     const results: Record<string, { price: number; change: number }> = {};
-    await Promise.all(state.watchlist.map(async (symbol) => {
+    
+    await Promise.all(Array.from(symbolsToFetch).map(async (symbol) => {
       const isCrypto = /USDT$|USDC$|BUSD$|BTC$|ETH$/.test(symbol);
-      if (isCrypto) {
-        try {
+      try {
+        if (isCrypto) {
           const res = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${symbol}`);
           const data = await res.json();
           if (data.lastPrice) results[symbol] = { price: parseFloat(data.lastPrice), change: parseFloat(data.priceChangePercent) };
-        } catch (e) {}
-      } else {
-        try {
+        } else {
+          // 針對組合中的市場自動獲取正確後綴
+          const market = activeAccount.portfolio.find(p => p.symbol === symbol)?.market || 'US';
+          const yahooTicker = getYahooTicker(symbol, market);
           const proxyUrl = "https://corsproxy.io/?";
-          const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1m&range=1d`;
+          const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooTicker}?interval=1m&range=1d`;
           const response = await fetch(proxyUrl + encodeURIComponent(targetUrl));
           const data = await response.json();
           if (data.chart?.result?.[0]?.meta) {
             const meta = data.chart.result[0].meta;
             results[symbol] = { price: meta.regularMarketPrice, change: ((meta.regularMarketPrice - meta.previousClose) / meta.previousClose) * 100 };
           }
-        } catch (e) {}
-      }
+        }
+      } catch (e) {}
     }));
     setPrices(prev => ({ ...prev, ...results }));
-  }, [state.watchlist]);
+  }, [activeAccount]);
 
   useEffect(() => {
-    fetchFNG(); fetchAllPrices();
-    const interval = setInterval(fetchAllPrices, 15000);
-    return () => clearInterval(interval);
-  }, [fetchFNG, fetchAllPrices]);
+    fetchPrices();
+    const timer = setInterval(fetchPrices, 30000);
+    return () => clearInterval(timer);
+  }, [fetchPrices]);
 
-  const portfolioSummary = useMemo(() => {
-    let totalValue = 0, totalCost = 0;
-    state.portfolio.forEach(item => {
-      const currentPrice = prices[item.symbol]?.price || item.cost;
-      totalValue += currentPrice * item.quantity;
-      totalCost += item.cost * item.quantity;
-    });
-    return { value: totalValue, profit: totalValue - totalCost, ratio: totalCost > 0 ? ((totalValue - totalCost) / totalCost) * 100 : 0 };
-  }, [state.portfolio, prices]);
+  // 帳戶切換邏輯
+  const switchAccount = (id: string) => {
+    const target = state.accounts.find(a => a.id === id);
+    if (!target) return;
+    if (target.password) {
+      setPendingAccountId(id);
+      setUnlockPassword('');
+      setUnlockError(false);
+    } else {
+      setState(prev => ({ ...prev, activeAccountId: id }));
+      setIsAccountModalOpen(false);
+    }
+  };
+
+  const handleUnlock = () => {
+    const target = state.accounts.find(a => a.id === pendingAccountId);
+    if (target && target.password === unlockPassword) {
+      setState(prev => ({ ...prev, activeAccountId: pendingAccountId! }));
+      setPendingAccountId(null);
+      setIsAccountModalOpen(false);
+    } else {
+      setUnlockError(true);
+    }
+  };
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-700 pb-20">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="glass-effect p-6 rounded-3xl border border-white/5 flex items-center gap-5">
-           <div className="w-12 h-12 bg-indigo-500/10 rounded-2xl flex items-center justify-center text-indigo-400 border border-indigo-500/20"><PieChart size={24} /></div>
-           <div><p className="text-[10px] text-gray-500 uppercase font-bold tracking-widest">{t.totalValue}</p><h3 className="text-xl font-black font-mono">{CURRENCY_SYMBOLS[state.currency]} {(portfolioSummary.value * EXCHANGE_RATES[state.currency]).toLocaleString(undefined, { maximumFractionDigits: 0 })}</h3></div>
+    <HashRouter>
+      <div className="min-h-screen bg-[#050505] text-white flex selection:bg-indigo-500/30">
+        
+        {/* 側邊欄 */}
+        <div className="w-64 h-screen fixed left-0 top-0 glass-effect border-r border-white/10 p-6 flex flex-col z-50">
+          <div className="flex items-center gap-3 mb-10 px-2">
+            <div className="w-10 h-10 bg-gradient-to-br from-indigo-600 to-blue-700 rounded-lg flex items-center justify-center shadow-lg shadow-blue-600/20">
+              <TrendingUp className="w-6 h-6 text-white" />
+            </div>
+            <h1 className="text-xl font-bold tracking-tight">WealthWise</h1>
+          </div>
+          
+          {/* 帳戶切換器 */}
+          <button 
+            onClick={() => setIsAccountModalOpen(true)}
+            className="mb-8 flex items-center justify-between w-full p-4 bg-white/5 border border-white/10 rounded-2xl hover:bg-white/10 transition-all group"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-indigo-500 flex items-center justify-center text-xs font-black uppercase">
+                {activeAccount.name[0]}
+              </div>
+              <div className="text-left">
+                <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest leading-none mb-1">Active Account</p>
+                <p className="text-sm font-bold truncate max-w-[100px]">{activeAccount.name}</p>
+              </div>
+            </div>
+            <ChevronDown size={14} className="text-gray-500 group-hover:text-white transition-colors" />
+          </button>
+
+          <nav className="flex-1 space-y-2">
+            {[
+              { path: '/', name: t.dashboard, icon: LayoutDashboard },
+              { path: '/portfolio', name: t.portfolio, icon: Wallet },
+              { path: '/settings', name: t.settings, icon: SettingsIcon },
+            ].map((item) => {
+              const Icon = item.icon;
+              return (
+                <Link 
+                  key={item.path} 
+                  to={item.path} 
+                  className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all group hover:bg-white/5 text-gray-400 hover:text-white`}
+                >
+                  <Icon size={18} />
+                  <span className="font-medium text-sm">{item.name}</span>
+                </Link>
+              );
+            })}
+          </nav>
+          
+          <div className="mt-auto space-y-4">
+             <button 
+               onClick={() => setState(prev => ({...prev, privacyMode: !prev.privacyMode}))}
+               className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl border transition-all font-bold text-xs ${state.privacyMode ? 'bg-indigo-600/20 border-indigo-500/50 text-indigo-400' : 'bg-white/5 border-white/10 text-gray-400'}`}
+             >
+               {state.privacyMode ? <EyeOff size={14} /> : <Eye size={14} />}
+               {state.privacyMode ? t.privacyOn : t.privacyOff}
+             </button>
+             <div className="p-4 glass-effect rounded-2xl text-[9px] text-gray-600 uppercase tracking-[0.2em] text-center border border-white/5 font-black">
+               WealthWise v5.0 Multi-Account
+             </div>
+          </div>
         </div>
-        <div className="glass-effect p-6 rounded-3xl border border-white/5 flex items-center gap-5">
-           <div className={`w-12 h-12 rounded-2xl flex items-center justify-center border ${portfolioSummary.profit >= 0 ? 'bg-green-500/10 text-green-400 border-green-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'}`}><BarChart3 size={24} /></div>
-           <div><p className="text-[10px] text-gray-500 uppercase font-bold tracking-widest">{t.totalProfit}</p><h3 className={`text-xl font-black font-mono ${portfolioSummary.profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>{portfolioSummary.profit >= 0 ? '+' : ''}{CURRENCY_SYMBOLS[state.currency]} {(portfolioSummary.profit * EXCHANGE_RATES[state.currency]).toLocaleString(undefined, { maximumFractionDigits: 0 })}</h3></div>
+
+        {/* 主內容區 */}
+        <main className="flex-1 ml-64 p-10 min-h-screen relative overflow-x-hidden">
+          <Routes>
+            <Route path="/" element={<DashboardView state={state} setState={setState} prices={prices} activeAccount={activeAccount} />} />
+            <Route path="/portfolio" element={<PortfolioView state={state} setState={setState} prices={prices} activeAccount={activeAccount} />} />
+            <Route path="/settings" element={<SettingsView state={state} setState={setState} activeAccount={activeAccount} />} />
+          </Routes>
+        </main>
+
+        {/* 帳戶管理 Modal */}
+        {isAccountModalOpen && (
+          <div className="fixed inset-0 bg-black/90 backdrop-blur-xl z-[100] flex items-center justify-center p-6">
+             <div className="glass-effect p-10 rounded-[2.5rem] w-full max-w-lg border border-white/10 relative">
+               <button onClick={() => setIsAccountModalOpen(false)} className="absolute top-8 right-8 text-gray-500 hover:text-white"><X size={24} /></button>
+               
+               {pendingAccountId ? (
+                 <div className="space-y-6 animate-in zoom-in-95 duration-200">
+                    <div className="text-center">
+                      <div className="w-16 h-16 bg-indigo-500/20 text-indigo-400 rounded-3xl flex items-center justify-center mx-auto mb-4"><Lock size={32} /></div>
+                      <h3 className="text-2xl font-black">{t.unlock}</h3>
+                      <p className="text-gray-500 text-sm mt-1">{t.enterPassword}</p>
+                    </div>
+                    <input 
+                      autoFocus
+                      type="password" 
+                      className={`w-full bg-white/5 border p-4 rounded-2xl outline-none text-center text-xl font-mono ${unlockError ? 'border-red-500 animate-shake' : 'border-white/10'}`}
+                      value={unlockPassword}
+                      onChange={e => { setUnlockPassword(e.target.value); setUnlockError(false); }}
+                      onKeyDown={e => e.key === 'Enter' && handleUnlock()}
+                    />
+                    <button onClick={handleUnlock} className="w-full bg-indigo-600 py-4 rounded-2xl font-black text-lg">解鎖並切換</button>
+                 </div>
+               ) : isCreatingAccount ? (
+                 <AccountCreationView onCancel={() => setIsCreatingAccount(false)} onSave={(acc) => {
+                   setState(prev => ({ ...prev, accounts: [...prev.accounts, acc], activeAccountId: acc.id }));
+                   setIsCreatingAccount(false);
+                 }} t={t} />
+               ) : (
+                 <div className="space-y-6">
+                    <div className="flex justify-between items-center mb-2">
+                      <h3 className="text-2xl font-black">{t.accounts}</h3>
+                      <button onClick={() => setIsCreatingAccount(true)} className="p-2 bg-indigo-600 rounded-xl hover:scale-110 transition-transform"><Plus size={18} /></button>
+                    </div>
+                    <div className="space-y-3 max-h-[400px] overflow-y-auto custom-scrollbar">
+                      {state.accounts.map(acc => (
+                        <button 
+                          key={acc.id} 
+                          onClick={() => switchAccount(acc.id)}
+                          className={`w-full flex items-center justify-between p-4 rounded-2xl border transition-all ${state.activeAccountId === acc.id ? 'bg-indigo-600/20 border-indigo-500 text-indigo-400' : 'bg-white/5 border-white/10 hover:border-white/30'}`}
+                        >
+                          <div className="flex items-center gap-3">
+                             <div className="w-10 h-10 rounded-xl bg-indigo-500 text-white flex items-center justify-center font-black">{acc.name[0]}</div>
+                             <div className="text-left">
+                               <p className="font-bold">{acc.name}</p>
+                               <p className="text-[10px] opacity-60 uppercase font-black">{acc.portfolio.length} Assets</p>
+                             </div>
+                          </div>
+                          {acc.password && <Lock size={12} className="opacity-40" />}
+                          {state.activeAccountId === acc.id && <Check size={16} />}
+                        </button>
+                      ))}
+                    </div>
+                 </div>
+               )}
+             </div>
+          </div>
+        )}
+      </div>
+    </HashRouter>
+  );
+};
+
+// 帳戶創建視圖
+const AccountCreationView = ({ onCancel, onSave, t }: { onCancel: () => void, onSave: (acc: Account) => void, t: any }) => {
+  const [name, setName] = useState('');
+  const [pwd, setPwd] = useState('');
+  return (
+    <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
+      <h3 className="text-2xl font-black">{t.addAccount}</h3>
+      <div className="space-y-4">
+        <label className="block space-y-1">
+          <span className="text-xs font-bold text-gray-500 uppercase tracking-widest">{t.accountName}</span>
+          <input type="text" className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 outline-none" value={name} onChange={e => setName(e.target.value)} autoFocus />
+        </label>
+        <label className="block space-y-1">
+          <span className="text-xs font-bold text-gray-500 uppercase tracking-widest">{t.password}</span>
+          <input type="password" placeholder="Leave blank for no password" className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 outline-none" value={pwd} onChange={e => setPwd(e.target.value)} />
+        </label>
+      </div>
+      <div className="grid grid-cols-2 gap-4 pt-4">
+        <button onClick={onCancel} className="bg-white/5 py-4 rounded-2xl font-bold">{t.cancel}</button>
+        <button onClick={() => name && onSave({ id: Date.now().toString(), name, password: pwd || undefined, portfolio: [], watchlist: ["BTCUSDT", "NVDA"], currency: 'TWD', language: 'zh-TW' })} className="bg-indigo-600 py-4 rounded-2xl font-black">{t.save}</button>
+      </div>
+    </div>
+  );
+};
+
+const DashboardView = memo(({ state, activeAccount, prices, setState }: any) => {
+  const [activeSymbol, setActiveSymbol] = useState(activeAccount.watchlist[0]);
+  const [fngData, setFngData] = useState({ stock: 55, crypto: 50, loading: true });
+  const t = TRANSLATIONS[activeAccount.language];
+
+  useEffect(() => {
+    fetch('https://api.alternative.me/fng/').then(r => r.json()).then(j => setFngData(prev => ({...prev, crypto: parseInt(j.data[0].value), loading: false})));
+  }, []);
+
+  const summary = useMemo(() => {
+    let totalValue = 0, totalCost = 0;
+    activeAccount.portfolio.forEach((item: any) => {
+      const cur = prices[item.symbol]?.price || item.cost;
+      totalValue += cur * item.quantity;
+      totalCost += item.cost * item.quantity;
+    });
+    return { value: totalValue, profit: totalValue - totalCost };
+  }, [activeAccount.portfolio, prices]);
+
+  return (
+    <div className="space-y-10 animate-in fade-in duration-700">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="glass-effect p-8 rounded-3xl border border-white/5 flex items-center gap-6">
+           <div className="w-14 h-14 bg-indigo-500/10 rounded-2xl flex items-center justify-center text-indigo-400 border border-indigo-500/20"><PieChart size={28} /></div>
+           <div>
+             <p className="text-[10px] text-gray-500 uppercase font-black tracking-widest mb-1">{t.totalValue}</p>
+             <h3 className="text-2xl font-black tracking-tighter">
+               <Amount value={summary.value} currency={activeAccount.currency} rate={EXCHANGE_RATES[activeAccount.currency]} privacy={state.privacyMode} />
+             </h3>
+           </div>
+        </div>
+        <div className="glass-effect p-8 rounded-3xl border border-white/5 flex items-center gap-6">
+           <div className={`w-14 h-14 rounded-2xl flex items-center justify-center border ${summary.profit >= 0 ? 'bg-green-500/10 text-green-400 border-green-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'}`}><BarChart3 size={28} /></div>
+           <div>
+             <p className="text-[10px] text-gray-500 uppercase font-black tracking-widest mb-1">{t.totalProfit}</p>
+             <h3 className={`text-2xl font-black tracking-tighter ${summary.profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+               <Amount value={summary.profit} currency={activeAccount.currency} rate={EXCHANGE_RATES[activeAccount.currency]} privacy={state.privacyMode} isProfit />
+             </h3>
+           </div>
         </div>
         <div className="grid grid-cols-2 gap-4">
-           <FearGreedIndex value={fngData.stock.score} label={`STOCKS ${fngData.stock.label}`} isAnalyzing={fngData.loading} compact />
-           <FearGreedIndex value={fngData.crypto.score} label={`CRYPTO ${fngData.crypto.label}`} isAnalyzing={fngData.loading} compact />
+           <FearGreedIndex value={fngData.stock} label="STOCKS" compact />
+           <FearGreedIndex value={fngData.crypto} label="CRYPTO" isAnalyzing={fngData.loading} compact />
         </div>
       </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+      
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
         <div className="lg:col-span-3 space-y-6">
-          <div className="flex items-center justify-between bg-white/[0.02] p-5 rounded-3xl border border-white/5">
-            <div className="flex flex-col">
-              <div className="flex items-center gap-2"><h2 className="text-2xl font-bold">{activeSymbol}</h2>{!/USDT$|USDC$|BUSD$|BTC$|ETH$/.test(activeSymbol) && !marketOpen && <span className="text-[9px] bg-red-500/10 text-red-400 px-2 py-0.5 rounded-full border border-red-500/20 font-bold">休市</span>}</div>
-              <div className="flex items-center gap-2 mt-1"><span className="text-[10px] text-gray-500 font-mono tracking-widest uppercase">{t.marketOverview}</span></div>
-            </div>
-            <div className="flex items-center gap-6">
-              {prices[activeSymbol] && <PriceDisplay price={prices[activeSymbol].price} currencySymbol={CURRENCY_SYMBOLS[state.currency]} rate={EXCHANGE_RATES[state.currency]} change={prices[activeSymbol].change} isMarketClosed={!/USDT$|USDC$|BUSD$|BTC$|ETH$/.test(activeSymbol) && !marketOpen} language={state.language} />}
-              <div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={16} /><input type="text" placeholder={t.placeholderSymbol} className="bg-white/5 border border-white/10 rounded-xl pl-10 pr-4 py-2 focus:ring-2 focus:ring-indigo-500 outline-none w-48 text-sm uppercase font-mono" onKeyDown={(e) => { if (e.key === 'Enter') { const val = (e.target as HTMLInputElement).value.toUpperCase(); if (val) { if (!state.watchlist.includes(val)) setState(prev => ({ ...prev, watchlist: [...prev.watchlist, val] })); setActiveSymbol(val); } } }} /></div>
-            </div>
-          </div>
-          <TradingViewWidget symbol={activeSymbol} />
+           <div className="flex items-center justify-between glass-effect p-6 rounded-3xl border border-white/5">
+              <div className="flex flex-col">
+                <h2 className="text-2xl font-black">{activeSymbol}</h2>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${isUSMarketOpen() ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
+                    {isUSMarketOpen() ? 'Live' : 'Market Closed'}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-8">
+                {prices[activeSymbol] && <PriceDisplay price={prices[activeSymbol].price} currencySymbol={CURRENCY_SYMBOLS[activeAccount.currency]} rate={EXCHANGE_RATES[activeAccount.currency]} change={prices[activeSymbol].change} language={activeAccount.language} />}
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={16} />
+                  <input 
+                    type="text" 
+                    placeholder={t.placeholderSymbol} 
+                    className="bg-white/5 border border-white/10 rounded-xl pl-10 pr-4 py-2 focus:ring-2 focus:ring-indigo-500 outline-none w-48 text-sm font-mono uppercase"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        const val = (e.target as HTMLInputElement).value.toUpperCase();
+                        if (val) {
+                          setState((prev: any) => ({
+                            ...prev,
+                            accounts: prev.accounts.map((a: Account) => a.id === activeAccount.id ? { ...a, watchlist: [...new Set([...a.watchlist, val])] } : a)
+                          }));
+                          setActiveSymbol(val);
+                        }
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+           </div>
+           <TradingViewWidget symbol={activeSymbol} />
         </div>
         <div className="glass-effect rounded-3xl p-6 border border-white/5 flex flex-col h-[600px]">
-           <div className="flex items-center justify-between mb-6"><h3 className="text-xs font-bold opacity-60 uppercase tracking-widest">{t.watchlist}</h3><RefreshCw size={12} className="text-gray-500 animate-spin-slow" /></div>
-           <div className="flex-1 overflow-y-auto space-y-3 custom-scrollbar">
-              {state.watchlist.map(s => {
-                const pData = prices[s]; const isActive = activeSymbol === s; 
+           <h3 className="text-xs font-black opacity-40 uppercase tracking-widest mb-6 px-2">{t.watchlist}</h3>
+           <div className="flex-1 overflow-y-auto space-y-3 custom-scrollbar pr-2">
+              {activeAccount.watchlist.map((s: string) => {
+                const p = prices[s]; const isActive = activeSymbol === s;
                 return (
-                  <button key={s} onClick={() => setActiveSymbol(s)} className={`w-full p-4 rounded-2xl border transition-all flex items-center justify-between group ${isActive ? 'bg-indigo-600 border-indigo-600 shadow-lg' : 'bg-white/5 border-white/10 hover:border-white/30'}`}>
-                    <div className="text-left"><span className={`block font-black text-sm ${isActive ? 'text-white' : 'text-gray-200'}`}>{s}</span><span className={`text-[10px] font-bold ${isActive ? 'text-indigo-200' : (pData?.change >= 0 ? 'text-green-400' : 'text-red-400')}`}>{pData ? `${pData.change >= 0 ? '+' : ''}${pData.change.toFixed(2)}%` : '--'}</span></div>
-                    <div className="text-right"><span className={`block font-mono text-xs font-bold ${isActive ? 'text-white' : 'text-gray-300'}`}>{pData ? (pData.price * EXCHANGE_RATES[state.currency]).toLocaleString(undefined, { maximumFractionDigits: 2 }) : '...'}</span><div onClick={(e) => { e.stopPropagation(); setState(prev => ({ ...prev, watchlist: prev.watchlist.filter(w => w !== s) })); }} className="opacity-0 group-hover:opacity-100 p-1 text-red-400 hover:bg-red-500/10 rounded-md transition-all"><Trash2 size={12} /></div></div>
+                  <button key={s} onClick={() => setActiveSymbol(s)} className={`w-full p-4 rounded-2xl border transition-all flex items-center justify-between group ${isActive ? 'bg-indigo-600 border-indigo-600' : 'bg-white/5 border-white/10 hover:border-white/30'}`}>
+                    <div className="text-left">
+                       <span className="block font-black text-sm">{s}</span>
+                       <span className={`text-[10px] font-black ${p?.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>{p ? `${p.change >= 0 ? '+' : ''}${p.change.toFixed(2)}%` : '--'}</span>
+                    </div>
+                    <div className="text-right">
+                       <span className="block font-mono text-xs font-black">
+                         {p ? (p.price * EXCHANGE_RATES[activeAccount.currency]).toLocaleString() : '...'}
+                       </span>
+                       <div onClick={(e) => {
+                         e.stopPropagation();
+                         setState((prev: any) => ({
+                           ...prev,
+                           accounts: prev.accounts.map((a: Account) => a.id === activeAccount.id ? { ...a, watchlist: a.watchlist.filter(w => w !== s) } : a)
+                         }));
+                       }} className="opacity-0 group-hover:opacity-100 p-1 text-red-500 transition-opacity"><Trash2 size={12} /></div>
+                    </div>
                   </button>
                 );
               })}
@@ -231,284 +458,245 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
   );
 });
 
-const Portfolio = memo(({ state, setState }: { state: AppState, setState: React.Dispatch<React.SetStateAction<AppState>> }) => {
-  const t = TRANSLATIONS[state.language]; 
-  const symbolIcon = CURRENCY_SYMBOLS[state.currency]; 
-  const rate = EXCHANGE_RATES[state.currency];
-  
-  const [livePrices, setLivePrices] = useState<Record<string, number>>({}); 
+const PortfolioView = memo(({ state, activeAccount, prices, setState }: any) => {
   const [isAdding, setIsAdding] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [newItem, setNewItem] = useState<Partial<PortfolioItem>>({ symbol: '', type: 'Stock', market: 'US', buyDate: new Date().toISOString().split('T')[0], cost: 0, quantity: 0 });
-  const [aiReport, setAiReport] = useState<{symbol: string, content: string} | null>(null);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [editingItem, setEditingItem] = useState<any>(null);
+  const [aiAnalysis, setAiAnalysis] = useState<any>(null);
+  const [loadingAi, setLoadingAi] = useState(false);
+  const t = TRANSLATIONS[activeAccount.language];
+  const rate = EXCHANGE_RATES[activeAccount.currency];
 
-  const aggregatedPortfolio = useMemo(() => {
-    const groups: Record<string, { totalQty: number, totalCost: number, batches: PortfolioItem[] }> = {};
-    state.portfolio.forEach(item => {
-      if (!groups[item.symbol]) groups[item.symbol] = { totalQty: 0, totalCost: 0, batches: [] };
-      groups[item.symbol].totalQty += item.quantity;
-      groups[item.symbol].totalCost += (item.cost * item.quantity);
-      groups[item.symbol].batches.push(item);
+  const aggregated = useMemo(() => {
+    const map: Record<string, { totalQty: number, totalCost: number, market: AssetMarket }> = {};
+    activeAccount.portfolio.forEach((p: any) => {
+      if (!map[p.symbol]) map[p.symbol] = { totalQty: 0, totalCost: 0, market: p.market };
+      map[p.symbol].totalQty += p.quantity;
+      map[p.symbol].totalCost += (p.cost * p.quantity);
     });
-    return Object.entries(groups).map(([sym, data]) => ({ symbol: sym, avgCost: data.totalQty > 0 ? data.totalCost / data.totalQty : 0, totalQty: data.totalQty, batches: data.batches.sort((a,b) => new Date(b.buyDate).getTime() - new Date(a.buyDate).getTime()) }));
-  }, [state.portfolio]);
-
-  const fetchPortfolioPrices = useCallback(async () => {
-    if (state.portfolio.length === 0) return;
-    const uniqueAssets = state.portfolio.reduce((acc, curr) => { if (!acc[curr.symbol]) acc[curr.symbol] = curr.market; return acc; }, {} as Record<string, AssetMarket>);
-    const results: Record<string, number> = {};
-    await Promise.all(Object.entries(uniqueAssets).map(async ([s, m]) => {
-      try {
-        if (m === 'Crypto' || /USDT$|USDC$|BUSD$|BTC$|ETH$/.test(s)) { 
-          const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${s}`); 
-          const data = await res.json(); if (data.price) results[s] = parseFloat(data.price); 
-        } else {
-          const yahooTicker = getYahooTicker(s, m);
-          const proxyUrl = "https://corsproxy.io/?";
-          const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooTicker}?interval=1m&range=1d`;
-          const response = await fetch(proxyUrl + encodeURIComponent(targetUrl));
-          const data = await response.json();
-          if (data.chart?.result?.[0]?.meta) results[s] = data.chart.result[0].meta.regularMarketPrice;
-        }
-      } catch (e) {}
+    return Object.entries(map).map(([sym, data]) => ({
+      symbol: sym,
+      avgCost: data.totalCost / data.totalQty,
+      totalQty: data.totalQty,
+      market: data.market
     }));
-    setLivePrices(prev => ({ ...prev, ...results }));
-  }, [state.portfolio]);
+  }, [activeAccount.portfolio]);
 
-  useEffect(() => { fetchPortfolioPrices(); const interval = setInterval(fetchPortfolioPrices, 30000); return () => clearInterval(interval); }, [fetchPortfolioPrices]);
-
-  const handleAIAnalysis = async (symbol: string) => {
-    setIsAnalyzing(true);
+  const runAi = async (symbol: string) => {
+    setLoadingAi(true);
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const currentPrice = livePrices[symbol] || "N/A";
-      const prompt = `你是一位世界頂級的金融投資大師。請針對代碼為 ${symbol} 的資產進行深度市場分析。目前的參考價格約為 ${currentPrice} USD。請提供：1. 近期盤勢分析 2. 技術面支撐與壓力 3. 基本面或消息面解讀 4. 給予 Buy/Hold/Sell 建議與理由。請使用繁體中文並保持專業。`;
+      const prompt = `你是一位頂級分析師。針對 ${symbol} 進行深度分析。參考幣別：${activeAccount.currency}。目前大概價位：${prices[symbol]?.price || '未知'}。請提供繁體中文專業建議：1. 市場情緒 2. 技術面 3. 操作策略。`;
       const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt });
-      setAiReport({ symbol, content: response.text || "分析失敗，請稍後再試。" });
-    } catch (e) {
-      setAiReport({ symbol, content: "分析模組暫時無法使用，請檢查網絡連線。" });
-    } finally { setIsAnalyzing(false); }
+      setAiAnalysis({ symbol, content: response.text });
+    } catch (e) { setAiAnalysis({ symbol, content: 'AI 分析暫時不可用。' }); }
+    finally { setLoadingAi(false); }
   };
 
   return (
-    <div className="space-y-10 animate-in slide-in-from-bottom-4 duration-500">
+    <div className="space-y-10 animate-in slide-in-from-bottom-4 duration-500 pb-20">
       <div className="flex justify-between items-center">
-        <div><h2 className="text-3xl font-bold">{t.portfolio}</h2><p className="text-xs text-gray-500 mt-1 uppercase tracking-widest font-bold">Track Assets & Maximize ROI</p></div>
-        <button onClick={() => { setEditingId(null); setIsAdding(true); }} className="bg-indigo-600 hover:bg-indigo-700 px-8 py-3 rounded-2xl flex items-center gap-2 font-bold shadow-xl transition-all active:scale-95"><Plus size={20} /> {t.addPortfolio}</button>
+        <div><h2 className="text-3xl font-black">{t.portfolio}</h2><p className="text-xs text-gray-600 font-black uppercase tracking-[0.2em]">{activeAccount.name} Assets</p></div>
+        <button onClick={() => { setEditingItem(null); setIsAdding(true); }} className="bg-indigo-600 hover:bg-indigo-700 px-8 py-3 rounded-2xl flex items-center gap-2 font-black shadow-xl active:scale-95 transition-all"><Plus size={20} /> {t.addPortfolio}</button>
       </div>
-      
-      {isAdding && (
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[100] flex items-center justify-center p-4">
-          <div className="glass-effect p-10 rounded-[2.5rem] w-full max-w-lg space-y-6 border border-white/10">
-            <div className="flex justify-between items-center"><h3 className="text-2xl font-black">{editingId ? '編輯資產' : t.addPortfolio}</h3><button onClick={() => setIsAdding(false)}><X size={24} /></button></div>
-            <div className="grid grid-cols-2 gap-4">
-              <label className="col-span-2 space-y-1">
-                <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">{t.symbol}</span>
-                <input type="text" className="w-full bg-white/5 border border-white/10 rounded-xl p-4 outline-none uppercase font-mono" placeholder="CRCL, NVDA, BTCUSDT" value={newItem.symbol} onChange={e => setNewItem({...newItem, symbol: e.target.value.toUpperCase()})} />
-              </label>
-              <label className="col-span-2 space-y-1">
-                <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">{t.marketType}</span>
-                <select className="w-full bg-neutral-900 border border-white/10 rounded-xl p-4 outline-none" value={newItem.market} onChange={e => setNewItem({...newItem, market: e.target.value as AssetMarket})}>
-                  <option value="US">美國股市 (US Stocks)</option>
-                  <option value="Crypto">加密貨幣 (Crypto)</option>
-                  <option value="TW">台灣股市 (TW Stocks)</option>
-                  <option value="MY">馬來西亞股市 (MY Stocks)</option>
-                  <option value="HK">香港股市 (HK Stocks)</option>
-                </select>
-              </label>
-              <label className="space-y-1"><span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">{t.cost}</span><input type="number" className="w-full bg-white/5 border border-white/10 rounded-xl p-4 outline-none" value={newItem.cost || ''} onChange={e => setNewItem({...newItem, cost: Number(e.target.value)})} /></label>
-              <label className="space-y-1"><span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">{t.quantity}</span><input type="number" className="w-full bg-white/5 border border-white/10 rounded-xl p-4 outline-none" value={newItem.quantity || ''} onChange={e => setNewItem({...newItem, quantity: Number(e.target.value)})} /></label>
-            </div>
-            <button onClick={() => {
-              if (!newItem.symbol || !newItem.cost) return;
-              setState(prev => {
-                const updated = editingId ? prev.portfolio.map(p => p.id === editingId ? { ...p, ...newItem } as PortfolioItem : p) : [...prev.portfolio, { ...newItem as PortfolioItem, id: Date.now().toString() }];
-                localStorage.setItem('portfolio', JSON.stringify(updated));
-                return { ...prev, portfolio: updated };
-              });
-              setIsAdding(false);
-            }} className="w-full bg-indigo-600 py-4 rounded-2xl font-black text-lg">儲存資產</button>
-          </div>
-        </div>
-      )}
-
-      {(aiReport || isAnalyzing) && (
-        <div className="fixed inset-0 bg-black/95 backdrop-blur-xl z-[110] flex items-center justify-center p-6 overflow-y-auto">
-          <div className="glass-effect p-10 rounded-[2.5rem] w-full max-w-2xl border border-indigo-500/30 relative">
-            <button onClick={() => setAiReport(null)} className="absolute top-8 right-8 text-gray-500 hover:text-white"><X size={24} /></button>
-            <div className="flex items-center gap-3 mb-8">
-               <div className="w-12 h-12 bg-indigo-500/20 rounded-2xl flex items-center justify-center text-indigo-400"><BrainCircuit size={24} /></div>
-               <div><h3 className="text-2xl font-black">{aiReport?.symbol} {t.aiAnalysis}</h3><p className="text-[10px] text-indigo-400 font-bold tracking-widest uppercase">Deep Market Intelligence</p></div>
-            </div>
-            {isAnalyzing ? (
-              <div className="py-20 flex flex-col items-center gap-6">
-                <div className="w-16 h-16 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-                <p className="text-xl font-bold animate-pulse text-indigo-200">{t.analyzing}</p>
-              </div>
-            ) : (
-              <div className="prose prose-invert max-w-none text-gray-300 leading-relaxed whitespace-pre-wrap font-medium">{aiReport?.content}</div>
-            )}
-          </div>
-        </div>
-      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-        {aggregatedPortfolio.map(group => {
-          const livePrice = livePrices[group.symbol];
-          const hasPrice = livePrice !== undefined;
-          const currentPriceVal = hasPrice ? livePrice : group.avgCost;
-          const totalProfit = hasPrice ? (currentPriceVal - group.avgCost) * group.totalQty : 0;
-          const totalInvested = group.avgCost * group.totalQty;
-          const marketVal = currentPriceVal * group.totalQty;
-          const roi = ((currentPriceVal - group.avgCost) / (group.avgCost || 1)) * 100;
-          const isProfit = totalProfit >= 0;
-          
+        {aggregated.map(group => {
+          const live = prices[group.symbol]?.price;
+          const hasPrice = live !== undefined;
+          const roi = hasPrice ? ((live - group.avgCost) / group.avgCost) * 100 : 0;
+          const profit = hasPrice ? (live - group.avgCost) * group.totalQty : 0;
+          const isProfit = profit >= 0;
+
           return (
             <div key={group.symbol} className="glass-effect p-8 rounded-[2.5rem] border border-white/10 space-y-6 group/card hover:border-indigo-500/50 transition-all shadow-2xl relative overflow-hidden">
-              {isProfit && hasPrice && <div className="absolute -right-8 -top-8 w-24 h-24 bg-green-500/10 blur-3xl pointer-events-none group-hover:bg-green-500/20 transition-all"></div>}
-              
-              <div className="flex justify-between items-start">
-                <div className="flex gap-3">
-                  <div className="w-14 h-14 bg-white/5 rounded-2xl flex items-center justify-center font-black text-xl text-indigo-400 border border-white/5">{group.symbol.slice(0,2)}</div>
+               {isProfit && hasPrice && <div className="absolute -right-8 -top-8 w-24 h-24 bg-green-500/5 blur-3xl pointer-events-none group-hover:bg-green-500/10 transition-all"></div>}
+               
+               <div className="flex justify-between items-start">
+                  <div className="flex gap-3">
+                    <div className="w-14 h-14 bg-white/5 rounded-2xl flex items-center justify-center font-black text-xl text-indigo-400 border border-white/5">{group.symbol.slice(0,2)}</div>
+                    <div>
+                      <h4 className="text-2xl font-black tracking-tighter flex items-center gap-2">{group.symbol}</h4>
+                      <p className="text-[10px] text-gray-600 uppercase font-black tracking-widest">{group.totalQty} Units</p>
+                    </div>
+                  </div>
+                  {hasPrice && (
+                    <div className={`px-4 py-2 rounded-2xl text-xs font-black flex items-center gap-1 ${isProfit ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
+                      {isProfit ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />} {roi.toFixed(2)}%
+                    </div>
+                  )}
+               </div>
+
+               <div className="grid grid-cols-2 gap-4 py-4 border-y border-white/5">
+                 <div>
+                   <p className="text-[10px] text-gray-500 font-bold uppercase mb-1">{t.avgCost}</p>
+                   <p className="font-mono text-lg font-black"><Amount value={group.avgCost} currency={activeAccount.currency} rate={rate} privacy={state.privacyMode} /></p>
+                 </div>
+                 <div className="text-right">
+                   <p className="text-[10px] text-gray-500 font-bold uppercase mb-1">{t.currentPrice}</p>
+                   <p className={`font-mono text-lg font-black ${hasPrice ? (isProfit ? 'text-green-400' : 'text-red-400') : 'text-gray-600'}`}>
+                     {hasPrice ? <Amount value={live} currency={activeAccount.currency} rate={rate} privacy={state.privacyMode} /> : '--'}
+                   </p>
+                 </div>
+               </div>
+
+               <div className="flex justify-between items-end">
                   <div>
-                    <h4 className="text-2xl font-black tracking-tighter flex items-center gap-2">{group.symbol} {isProfit && hasPrice && <TrendingUp size={16} className="text-green-400" />}</h4>
-                    <p className="text-[10px] text-gray-500 uppercase font-bold tracking-widest">Holdings Summary</p>
+                    <p className="text-[10px] text-gray-500 font-bold uppercase">{t.profit}</p>
+                    <h3 className={`text-3xl font-black font-mono tracking-tighter ${hasPrice ? (isProfit ? 'text-green-400' : 'text-red-400') : 'text-gray-700'}`}>
+                      {hasPrice ? <Amount value={profit} currency={activeAccount.currency} rate={rate} privacy={state.privacyMode} isProfit /> : '--'}
+                    </h3>
                   </div>
-                </div>
-                {hasPrice ? (
-                  <div className={`px-4 py-2 rounded-2xl text-xs font-black flex items-center gap-1 shadow-lg ${isProfit ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
-                    {isProfit ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />} {roi.toFixed(2)}%
-                  </div>
-                ) : (
-                  <div className="px-4 py-2 rounded-2xl text-[10px] font-black bg-white/5 text-gray-500 flex items-center gap-1"><AlertCircle size={10} /> {t.marketClosed}</div>
-                )}
-              </div>
-
-              {/* 價格對比區域 */}
-              <div className="grid grid-cols-2 gap-4 py-4 border-y border-white/5">
-                <div>
-                  <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-1">{t.avgCost}</p>
-                  <p className="font-mono text-lg font-black">{symbolIcon} {(group.avgCost * rate).toLocaleString(undefined, {minimumFractionDigits: 2})}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-1">{t.currentPrice}</p>
-                  <p className={`font-mono text-lg font-black ${hasPrice ? (isProfit ? 'text-green-400' : 'text-red-400') : 'text-gray-500'}`}>
-                    {hasPrice ? `${symbolIcon} ${(currentPriceVal * rate).toLocaleString(undefined, {minimumFractionDigits: 2})}` : '--'}
-                  </p>
-                </div>
-              </div>
-
-              {/* 盈虧與市值顯示 */}
-              <div className="space-y-4">
-                <div className="flex justify-between items-end">
-                   <div>
-                      <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">{t.profit}</p>
-                      <h3 className={`text-3xl font-black font-mono tracking-tighter ${hasPrice ? (isProfit ? 'text-green-400 drop-shadow-[0_0_10px_rgba(74,222,128,0.3)]' : 'text-red-400') : 'text-gray-600'}`}>
-                        {hasPrice ? `${isProfit ? '+' : ''}${symbolIcon} ${(totalProfit * rate).toLocaleString(undefined, {maximumFractionDigits: 0})}` : '--'}
-                      </h3>
-                   </div>
-                   <button onClick={() => handleAIAnalysis(group.symbol)} className="p-4 bg-indigo-600/10 text-indigo-400 rounded-2xl hover:bg-indigo-600 hover:text-white transition-all group-hover/card:scale-105 active:scale-95 shadow-lg border border-indigo-500/20">
-                     <Sparkles size={20} />
-                   </button>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4 pt-2">
-                  <div className="bg-white/[0.03] p-3 rounded-2xl border border-white/5">
-                    <p className="text-[9px] text-gray-500 font-bold uppercase mb-1">{t.totalCost}</p>
-                    <p className="font-mono text-xs font-bold text-gray-300">{symbolIcon} {(totalInvested * rate).toLocaleString(undefined, {maximumFractionDigits: 0})}</p>
-                  </div>
-                  <div className="bg-white/[0.03] p-3 rounded-2xl border border-white/5">
-                    <p className="text-[9px] text-gray-500 font-bold uppercase mb-1">{t.marketValue}</p>
-                    <p className="font-mono text-xs font-bold text-gray-300">{hasPrice ? `${symbolIcon} ${(marketVal * rate).toLocaleString(undefined, {maximumFractionDigits: 0})}` : '--'}</p>
-                  </div>
-                </div>
-              </div>
+                  <button onClick={() => runAi(group.symbol)} className="p-4 bg-indigo-600/10 text-indigo-400 rounded-2xl hover:bg-indigo-600 hover:text-white transition-all shadow-lg border border-indigo-500/20"><Sparkles size={20} /></button>
+               </div>
             </div>
           );
         })}
       </div>
 
+      {/* 明細表格 */}
       <div className="space-y-4">
-        <h3 className="text-lg font-bold flex items-center gap-2 px-2"><Activity size={18} className="text-indigo-400" /> 交易明細 (Batches)</h3>
-        <div className="glass-effect rounded-[2rem] overflow-hidden border border-white/5">
-          <table className="w-full text-left">
-            <thead className="bg-white/[0.03] border-b border-white/5 text-[10px] uppercase tracking-widest opacity-60 font-black">
-              <tr><th className="px-8 py-5">日期</th><th className="px-8 py-5">商品</th><th className="px-8 py-5 text-right">入場價</th><th className="px-8 py-5 text-right">數量</th><th className="px-8 py-5 text-right">ROI%</th><th className="px-8 py-5 text-center">操作</th></tr>
-            </thead>
-            <tbody className="divide-y divide-white/5">
-              {state.portfolio.map(item => {
-                const livePrice = livePrices[item.symbol];
-                const roi = livePrice ? ((livePrice - item.cost) / item.cost) * 100 : 0;
-                return (
+        <h3 className="text-lg font-black flex items-center gap-2 px-2"><Activity size={18} className="text-indigo-400" /> Transaction Batches</h3>
+        <div className="glass-effect rounded-[2.5rem] overflow-hidden border border-white/5">
+           <table className="w-full text-left">
+             <thead className="bg-white/[0.03] border-b border-white/5 text-[10px] uppercase font-black opacity-40">
+               <tr><th className="px-8 py-5">Date</th><th className="px-8 py-5">Asset</th><th className="px-8 py-5 text-right">Cost</th><th className="px-8 py-5 text-right">Qty</th><th className="px-8 py-5 text-center">Actions</th></tr>
+             </thead>
+             <tbody className="divide-y divide-white/5">
+                {activeAccount.portfolio.map((item: any) => (
                   <tr key={item.id} className="group/row hover:bg-white/[0.02] transition-colors">
-                    <td className="px-8 py-6 font-mono text-gray-400 text-xs">{item.buyDate}</td>
-                    <td className="px-8 py-6 font-black uppercase text-sm">{item.symbol}</td>
-                    <td className="px-8 py-6 font-mono text-right font-bold text-sm">{symbolIcon} {(item.cost * rate).toLocaleString()}</td>
-                    <td className="px-8 py-6 font-mono text-right opacity-60 text-sm">{item.quantity}</td>
-                    <td className={`px-8 py-6 font-mono text-right text-xs font-black ${livePrice ? (roi >= 0 ? 'text-green-400' : 'text-red-400') : 'text-gray-600'}`}>
-                      {livePrice ? `${roi >= 0 ? '+' : ''}${roi.toFixed(2)}%` : '--'}
-                    </td>
-                    <td className="px-8 py-6">
+                    <td className="px-8 py-6 font-mono text-gray-500 text-xs">{item.buyDate}</td>
+                    <td className="px-8 py-6 font-black text-sm uppercase">{item.symbol}</td>
+                    <td className="px-8 py-6 text-right"><Amount value={item.cost} currency={activeAccount.currency} rate={rate} privacy={state.privacyMode} /></td>
+                    <td className="px-8 py-6 text-right font-mono text-xs opacity-60">{item.quantity}</td>
+                    <td className="px-8 py-6 text-center">
                       <div className="flex items-center justify-center gap-2 opacity-0 group-hover/row:opacity-100 transition-opacity">
-                        <button onClick={() => { setNewItem(item); setEditingId(item.id); setIsAdding(true); }} className="p-2 text-indigo-400 hover:bg-indigo-400/10 rounded-xl"><Edit3 size={16} /></button>
-                        <button onClick={() => setState(prev => ({ ...prev, portfolio: prev.portfolio.filter(p => p.id !== item.id) }))} className="p-2 text-red-500 hover:bg-red-500/10 rounded-xl"><Trash2 size={16} /></button>
+                        <button onClick={() => { setEditingItem(item); setIsAdding(true); }} className="p-2 text-indigo-400 hover:bg-indigo-400/10 rounded-xl"><Edit3 size={16} /></button>
+                        <button onClick={() => setState((prev: any) => ({
+                          ...prev,
+                          accounts: prev.accounts.map((a: Account) => a.id === activeAccount.id ? { ...a, portfolio: a.portfolio.filter((p: any) => p.id !== item.id) } : a)
+                        }))} className="p-2 text-red-500 hover:bg-red-500/10 rounded-xl"><Trash2 size={16} /></button>
                       </div>
                     </td>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          {state.portfolio.length === 0 && <div className="py-20 text-center opacity-30 font-bold">尚未加入資產</div>}
+                ))}
+             </tbody>
+           </table>
+           {activeAccount.portfolio.length === 0 && <div className="py-20 text-center opacity-20 font-black">No transactions found</div>}
         </div>
       </div>
+
+      {/* 新增/編輯視窗 */}
+      {isAdding && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[120] flex items-center justify-center p-4">
+           <div className="glass-effect p-10 rounded-[2.5rem] w-full max-w-lg space-y-6 border border-white/10">
+              <div className="flex justify-between items-center"><h3 className="text-2xl font-black">{editingItem ? 'Edit Asset' : t.addPortfolio}</h3><button onClick={() => setIsAdding(false)}><X size={24} /></button></div>
+              <div className="grid grid-cols-2 gap-4">
+                 <label className="col-span-2 space-y-1">
+                    <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">{t.symbol}</span>
+                    <input type="text" className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 outline-none uppercase font-mono" defaultValue={editingItem?.symbol} id="sym_input" />
+                 </label>
+                 <label className="col-span-2 space-y-1">
+                    <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Market</span>
+                    <select className="w-full bg-neutral-900 border border-white/10 rounded-2xl p-4 outline-none" id="market_input" defaultValue={editingItem?.market || 'US'}>
+                      <option value="US">US Stocks</option><option value="Crypto">Crypto</option><option value="TW">TW Stocks</option><option value="MY">MY Stocks</option><option value="HK">HK Stocks</option>
+                    </select>
+                 </label>
+                 <label className="space-y-1"><span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">{t.cost}</span><input type="number" className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 outline-none" defaultValue={editingItem?.cost} id="cost_input" /></label>
+                 <label className="space-y-1"><span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">{t.quantity}</span><input type="number" className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 outline-none" defaultValue={editingItem?.quantity} id="qty_input" /></label>
+              </div>
+              <button onClick={() => {
+                const sym = (document.getElementById('sym_input') as HTMLInputElement).value.toUpperCase();
+                const cost = Number((document.getElementById('cost_input') as HTMLInputElement).value);
+                const qty = Number((document.getElementById('qty_input') as HTMLInputElement).value);
+                const market = (document.getElementById('market_input') as HTMLSelectElement).value as AssetMarket;
+                if (!sym || !cost || !qty) return;
+
+                const newItem: PortfolioItem = {
+                  id: editingItem?.id || Date.now().toString(),
+                  symbol: sym,
+                  cost,
+                  quantity: qty,
+                  market,
+                  type: market === 'Crypto' ? 'Crypto' : 'Stock',
+                  buyDate: editingItem?.buyDate || new Date().toISOString().split('T')[0]
+                };
+
+                setState((prev: any) => ({
+                  ...prev,
+                  accounts: prev.accounts.map((a: Account) => {
+                    if (a.id !== activeAccount.id) return a;
+                    const p = editingItem ? a.portfolio.map(pi => pi.id === editingItem.id ? newItem : pi) : [...a.portfolio, newItem];
+                    return { ...a, portfolio: p };
+                  })
+                }));
+                setIsAdding(false);
+              }} className="w-full bg-indigo-600 py-4 rounded-2xl font-black text-lg">Save Asset</button>
+           </div>
+        </div>
+      )}
+
+      {/* AI 分析彈窗 */}
+      {aiAnalysis && (
+        <div className="fixed inset-0 bg-black/95 backdrop-blur-xl z-[150] flex items-center justify-center p-6 overflow-y-auto">
+          <div className="glass-effect p-10 rounded-[2.5rem] w-full max-w-2xl border border-indigo-500/30 relative">
+            <button onClick={() => setAiAnalysis(null)} className="absolute top-8 right-8 text-gray-500 hover:text-white"><X size={24} /></button>
+            <div className="flex items-center gap-3 mb-8">
+               <div className="w-12 h-12 bg-indigo-500/20 rounded-2xl flex items-center justify-center text-indigo-400"><BrainCircuit size={24} /></div>
+               <div><h3 className="text-2xl font-black">{aiAnalysis.symbol} {t.aiAnalysis}</h3></div>
+            </div>
+            <div className="prose prose-invert max-w-none text-gray-300 leading-relaxed whitespace-pre-wrap font-medium">{aiAnalysis.content}</div>
+          </div>
+        </div>
+      )}
+      {loadingAi && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[150] flex items-center justify-center"><RefreshCw className="animate-spin text-indigo-500" size={48} /></div>
+      )}
     </div>
   );
 });
 
-const Settings = memo(({ state, setState }: { state: AppState, setState: React.Dispatch<React.SetStateAction<AppState>> }) => {
-  const t = TRANSLATIONS[state.language];
+const SettingsView = memo(({ state, activeAccount, setState }: any) => {
+  const t = TRANSLATIONS[activeAccount.language];
   return (
     <div className="max-w-2xl space-y-8 animate-in fade-in duration-500">
-      <h2 className="text-3xl font-bold">{t.settings}</h2>
+      <h2 className="text-3xl font-black">{t.settings}</h2>
       <div className="glass-effect rounded-[2.5rem] p-10 space-y-10 border border-white/5">
         <div className="flex items-center justify-between">
-          <div><h4 className="font-bold text-lg">{t.lang}</h4><p className="text-sm text-gray-500">切換應用介面顯示語言</p></div>
-          <select value={state.language} onChange={(e) => setState(prev => ({...prev, language: e.target.value as Language}))} className="bg-neutral-900 border border-white/10 rounded-xl p-4 outline-none">
-            <option value="en">English (US)</option>
-            <option value="zh-TW">繁體中文 (Taiwan)</option>
+          <div><h4 className="font-bold text-lg">{activeAccount.language === 'zh-TW' ? '顯示語言' : 'Language'}</h4><p className="text-sm text-gray-500">切換應用介面顯示語言</p></div>
+          <select value={activeAccount.language} onChange={(e) => {
+            setState((prev: any) => ({
+              ...prev,
+              accounts: prev.accounts.map((a: Account) => a.id === activeAccount.id ? { ...a, language: e.target.value as Language } : a)
+            }));
+          }} className="bg-neutral-900 border border-white/10 rounded-xl p-4 outline-none">
+            <option value="en">English (US)</option><option value="zh-TW">繁體中文 (Taiwan)</option>
           </select>
         </div>
         <div className="flex items-center justify-between">
-          <div><h4 className="font-bold text-lg">{t.currency}</h4><p className="text-sm text-gray-500">所有資產將以此幣別計算顯示</p></div>
-          <select value={state.currency} onChange={(e) => setState(prev => ({...prev, currency: e.target.value as Currency}))} className="bg-neutral-900 border border-white/10 rounded-xl p-4 outline-none">
-            <option value="USD">USD ($)</option>
-            <option value="TWD">TWD (NT$)</option>
-            <option value="MYR">MYR (RM)</option>
+          <div><h4 className="font-bold text-lg">{activeAccount.language === 'zh-TW' ? '顯示幣別' : 'Currency'}</h4><p className="text-sm text-gray-500">計算與顯示主要幣別</p></div>
+          <select value={activeAccount.currency} onChange={(e) => {
+            setState((prev: any) => ({
+              ...prev,
+              accounts: prev.accounts.map((a: Account) => a.id === activeAccount.id ? { ...a, currency: e.target.value as Currency } : a)
+            }));
+          }} className="bg-neutral-900 border border-white/10 rounded-xl p-4 outline-none">
+            <option value="USD">USD ($)</option><option value="TWD">TWD (NT$)</option><option value="MYR">MYR (RM)</option>
           </select>
+        </div>
+        <div className="pt-6 border-t border-white/5">
+           <button onClick={() => {
+             if (confirm('確定要刪除此帳戶嗎？此操作無法恢復。')) {
+               setState((prev: any) => {
+                 const newAccs = prev.accounts.filter((a: Account) => a.id !== activeAccount.id);
+                 if (newAccs.length === 0) return prev;
+                 return { ...prev, accounts: newAccs, activeAccountId: newAccs[0].id };
+               });
+             }
+           }} className="text-red-500 hover:text-red-400 font-bold flex items-center gap-2 transition-colors"><Trash2 size={16} /> Delete This Account</button>
         </div>
       </div>
     </div>
   );
 });
-
-const App = () => {
-  const [state, setState] = useState<AppState>(INITIAL_STATE);
-  return (
-    <HashRouter>
-      <div className="min-h-screen bg-[#050505] text-white flex selection:bg-indigo-500/30">
-        <Sidebar language={state.language} />
-        <main className="flex-1 ml-64 p-10 min-h-screen relative overflow-x-hidden">
-          <Routes>
-            <Route path="/" element={<Dashboard state={state} setState={setState} />} />
-            <Route path="/portfolio" element={<Portfolio state={state} setState={setState} />} />
-            <Route path="/settings" element={<Settings state={state} setState={setState} />} />
-          </Routes>
-        </main>
-      </div>
-    </HashRouter>
-  );
-};
 
 export default App;

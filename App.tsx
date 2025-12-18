@@ -32,7 +32,6 @@ import TradingViewWidget from './components/TradingViewWidget';
 import FearGreedIndex from './components/FearGreedIndex';
 import { analyzeMarket, getChatResponse, getFearGreedIndices } from './services/geminiService';
 
-// 更新至 2025 年 2 月真實市場收盤參考價格
 const STOCK_BASE_PRICES: Record<string, number> = {
   'AAPL': 231.54,
   'NVDA': 140.22, 
@@ -209,7 +208,7 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
     try {
       const result = await analyzeMarket(activeSymbol, state.language);
       if (result) {
-        const initialMessage = `【大師診斷報告：${activeSymbol}】\n決策建議：${result.recommendation}\n關鍵水位：${result.keyLevels.join(', ')}\n\n${result.detailedAnalysis}`;
+        const initialMessage = `【TradingView 實時診斷報告：${activeSymbol}】\n決策建議：${result.recommendation}\n關鍵水位：${result.keyLevels.join(', ')}\n\n${result.detailedAnalysis}`;
         setMessages([{ role: 'model', text: initialMessage, sources: result.sources }]);
         setState(prev => ({ ...prev, history: [{ id: Date.now().toString(), symbol: activeSymbol, timestamp: Date.now(), ...result }, ...prev.history].slice(0, 50) }));
       }
@@ -237,7 +236,10 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
     <div className="space-y-8 animate-in fade-in duration-500">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
-          <div className="flex items-center justify-between bg-white/[0.02] p-4 rounded-2xl border border-white/5">
+          <div className="flex items-center justify-between bg-white/[0.02] p-4 rounded-2xl border border-white/5 relative">
+            <div className="absolute -top-3 left-4 bg-blue-600 text-[8px] font-black uppercase tracking-widest px-2 py-1 rounded border border-blue-400 shadow-lg z-10 flex items-center gap-1">
+              <ExternalLink size={8} /> TradingView Data Central
+            </div>
             <div className="flex flex-col">
               <div className="flex items-center gap-2">
                 <h2 className="text-2xl font-bold">{activeSymbol}</h2>
@@ -290,7 +292,7 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
             </div>
             <div className="flex-1 p-4 overflow-y-auto custom-scrollbar space-y-4">
               {messages.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-center opacity-40 px-6"><Bot size={48} className="mb-4 text-gray-500" /><p className="text-sm font-medium">我是您的 AI 策略大師</p><p className="text-[11px] mt-2">點擊上方「分析」獲取最新報告。</p></div>
+                <div className="flex flex-col items-center justify-center h-full text-center opacity-40 px-6"><Bot size={48} className="mb-4 text-gray-500" /><p className="text-sm font-medium">我是您的 AI 策略大師</p><p className="text-[11px] mt-2">點擊上方「分析」獲取基於 TradingView 的最新報告。</p></div>
               ) : (
                 messages.map((m, i) => (
                   <div key={i} className={`flex flex-col gap-2 ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
@@ -314,7 +316,10 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
       </div>
 
       <div className="glass-effect rounded-3xl p-8 border border-white/5">
-         <h3 className="text-sm font-bold opacity-60 uppercase tracking-widest mb-6">{t.watchlist}</h3>
+         <div className="flex items-center justify-between mb-6">
+           <h3 className="text-sm font-bold opacity-60 uppercase tracking-widest">{t.watchlist}</h3>
+           <span className="text-[9px] font-bold text-gray-500 uppercase flex items-center gap-1">Powered by TradingView Chart</span>
+         </div>
          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
             {state.watchlist.map(s => {
               const pData = prices[s]; const isActive = activeSymbol === s; const isCrypto = /USDT$|USDC$|BUSD$|BTC$|ETH$/.test(s); const isClosed = !isCrypto && !marketOpen;

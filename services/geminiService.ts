@@ -46,7 +46,7 @@ export const getFearGreedIndices = async (language: string) => {
   }
 };
 
-// 基礎分析：生成結構化報告，加入 Google Search 確保數據準確性
+// 基礎分析：生成結構化報告，強制要求參考 TradingView 數據
 export const analyzeMarket = async (symbol: string, language: string) => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const isChinese = language === 'zh-TW';
@@ -54,7 +54,7 @@ export const analyzeMarket = async (symbol: string, language: string) => {
   const systemInstruction = `
     你是一位擁有 30 年華爾街經驗的「全球首席金融策略大師」(Global Chief Strategy Officer)。
     你的任務：對資產 ${symbol} 進行深度診斷。
-    你必須使用提供的搜尋工具來獲取該資產的「最新實時價格」與「今日市場新聞」。
+    你必須使用搜尋工具，優先參考 TradingView 的實時數據、報價與技術圖表分析。
     輸出結構必須嚴格遵守 JSON，包含 summary, recommendation, detailedAnalysis, sentimentScore, sentimentLabel, keyLevels。
     語言：${isChinese ? '繁體中文' : 'English'}。
   `;
@@ -62,7 +62,7 @@ export const analyzeMarket = async (symbol: string, language: string) => {
   try {
     const response: GenerateContentResponse = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: `身為策略大師，請對 "${symbol}" 進行實時市場搜索，獲取最新價格並提供深度診斷。`,
+      contents: `身為策略大師，請搜索 TradingView 上關於 "${symbol}" 的最新實時價格與技術指標，並提供深度診斷。`,
       config: {
         systemInstruction,
         tools: [{googleSearch: {}}],
@@ -97,18 +97,16 @@ export const analyzeMarket = async (symbol: string, language: string) => {
   }
 };
 
-// 對話功能：與 AI 大師即時交談
+// 對話功能：與 AI 大師即時交談，參考 TradingView
 export const getChatResponse = async (symbol: string, history: any[], message: string, language: string) => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const isChinese = language === 'zh-TW';
 
   const systemInstruction = `
     你是一位擁有 30 年華爾街經驗的「全球首席金融策略大師」。
-    當前正在與客戶討論資產：${symbol}。
-    你可以使用搜尋工具來驗證實時市場數據。
-    你的回答必須具備專業度、深度、語氣冷勝自信。
+    當前討論資產：${symbol}。
+    你必須優先搜尋 TradingView 的數據來回答問題。
     語言：必須使用${isChinese ? '繁體中文' : 'English'}。
-    如果是關於股價或實時新聞的問題，請務必先進行搜尋。
   `;
 
   try {
@@ -126,7 +124,6 @@ export const getChatResponse = async (symbol: string, history: any[], message: s
 
     const response = await chat.sendMessage({ message });
     
-    // 提取對話中的搜尋來源
     const sources = response.candidates?.[0]?.groundingMetadata?.groundingChunks?.map((chunk: any) => ({
       title: chunk.web?.title,
       uri: chunk.web?.uri

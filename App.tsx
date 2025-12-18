@@ -121,7 +121,7 @@ const Sidebar = memo(({ language }: { language: Language }) => {
           );
         })}
       </nav>
-      <div className="mt-auto p-4 glass-effect rounded-2xl text-[10px] text-gray-500 uppercase tracking-[0.2em] text-center border border-white/5">Master Engine v2.2</div>
+      <div className="mt-auto p-4 glass-effect rounded-2xl text-[10px] text-gray-500 uppercase tracking-[0.2em] text-center border border-white/5">Master Engine v2.3</div>
     </div>
   );
 });
@@ -162,10 +162,15 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
         localStorage.setItem('cache_fng_stock', JSON.stringify(results.stock));
         localStorage.setItem('cache_fng_crypto', JSON.stringify(results.crypto));
         setFngError(false);
+      } else {
+        throw new Error("No data");
       }
     } catch (e) {
-      if (retryCount < 2) setTimeout(() => fetchFearGreedData(retryCount + 1), 3000);
-      else setFngError(true);
+      if (retryCount < 1) {
+        setTimeout(() => fetchFearGreedData(retryCount + 1), 3000);
+      } else {
+        setFngError(true);
+      }
     } finally {
       setIsFetchingFNG(false);
     }
@@ -173,7 +178,7 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
 
   useEffect(() => {
     fetchFearGreedData();
-    const interval = setInterval(fetchFearGreedData, 1800000);
+    const interval = setInterval(fetchFearGreedData, 3600000);
     return () => clearInterval(interval);
   }, []);
 
@@ -213,16 +218,18 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
   const handleDeepAnalysis = async () => {
     if (isAnalyzing) return;
     setIsAnalyzing(true);
-    setMessages([{ role: 'model', text: "" }]); // 佔位
+    setMessages([{ role: 'model', text: "" }]); 
     try {
       const result = await analyzeMarket(activeSymbol, state.language);
       if (result) {
-        const report = `【TradingView 診斷：${activeSymbol}】\n決策：${result.recommendation}\n點位：${result.keyLevels.join(', ')}\n\n${result.detailedAnalysis}`;
+        const report = `【大師診斷：${activeSymbol}】\n建議：${result.recommendation}\n核心邏輯：${result.summary}\n技術點位：${result.keyLevels.join(', ')}\n\n詳細分析：\n${result.detailedAnalysis}`;
         setMessages([{ role: 'model', text: report, sources: result.sources }]);
         setState(prev => ({ ...prev, history: [{ id: Date.now().toString(), symbol: activeSymbol, timestamp: Date.now(), ...result }, ...prev.history].slice(0, 50) }));
+      } else {
+        setMessages([{ role: 'model', text: "大師目前感應較弱，請確認代碼或稍後再試。" }]);
       }
     } catch(e) {
-      setMessages([{ role: 'model', text: "分析失敗，請重試。" }]);
+      setMessages([{ role: 'model', text: "系統繁忙，無法完成深度分析。" }]);
     } finally { setIsAnalyzing(false); }
   };
 
@@ -232,8 +239,7 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
     const userMsg = inputValue.trim();
     setInputValue('');
     
-    // 預先過濾出有效的對話歷史 (僅保留文字內容)
-    const validHistory = messages.filter(m => m.text && m.text.length > 0);
+    const prevHistory = messages.filter(m => m.text);
     
     setMessages(prev => [
       ...prev, 
@@ -244,7 +250,7 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
     setIsAnalyzing(true);
     
     try {
-      await getChatResponseStream(activeSymbol, validHistory, userMsg, state.language, (streamedText) => {
+      await getChatResponseStream(activeSymbol, prevHistory, userMsg, state.language, (streamedText) => {
         setMessages(prev => {
           const newMessages = [...prev];
           if (newMessages.length > 0) {
@@ -254,61 +260,71 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
         });
       });
     } catch (error) {
-       console.error("Stream failed", error);
+       setMessages(prev => {
+         const nm = [...prev];
+         if (nm.length > 0) nm[nm.length-1].text = "回應中斷，請重試。";
+         return nm;
+       });
     } finally {
       setIsAnalyzing(false);
     }
   };
 
-  const currencySymbol = CURRENCY_SYMBOLS[state.currency];
-  const rate = EXCHANGE_RATES[state.currency];
-  const activePriceData = prices[activeSymbol];
-  const isActiveCrypto = /USDT$|USDC$|BUSD$|BTC$|ETH$/.test(activeSymbol);
-
-  // 渲染 AI 大師聊天組件
-  const renderAIAnalyst = (fullWidth = false) => (
-    <div className={`glass-effect rounded-2xl flex flex-col border border-white/10 relative overflow-hidden shadow-2xl transition-all duration-300 ${fullWidth ? 'fixed inset-4 z-[100] bg-[#0a0a0a]/95' : 'h-[400px]'}`}>
-      <div className="p-4 border-b border-white/10 flex items-center justify-between bg-white/[0.02]">
-        <div className="flex items-center gap-2">
-          <ShieldCheck size={18} className="text-blue-400" />
-          <h3 className="text-sm font-bold tracking-wide uppercase">{t.aiAnalyst}</h3>
+  const renderAIAnalystBox = (fullScreen = false) => (
+    <div className={`glass-effect rounded-2xl flex flex-col border border-white/10 relative overflow-hidden shadow-2xl transition-all duration-300 ${fullScreen ? 'fixed inset-6 z-[100] bg-neutral-950/95 ring-4 ring-blue-600/20' : 'h-[400px]'}`}>
+      <div className="p-4 border-b border-white/10 flex items-center justify-between bg-white/[0.03]">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-full bg-blue-600/20 flex items-center justify-center border border-blue-500/30">
+            <Bot size={18} className="text-blue-400" />
+          </div>
+          <div>
+            <h3 className="text-sm font-bold tracking-wide uppercase">{t.aiAnalyst}</h3>
+            <span className="text-[8px] text-blue-500 font-mono tracking-widest uppercase">Master Engine Active</span>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <button 
             onClick={() => setIsMaximized(!isMaximized)} 
-            className="p-1.5 hover:bg-white/10 rounded-lg text-gray-400 hover:text-white transition-colors"
+            className="p-2 hover:bg-white/10 rounded-xl text-gray-400 hover:text-white transition-all active:scale-90"
+            title={isMaximized ? "縮小" : "放大"}
           >
-            {isMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+            {isMaximized ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
           </button>
-          {!fullWidth && (
-             <button onClick={handleDeepAnalysis} disabled={isAnalyzing} className="text-[10px] bg-blue-600/20 text-blue-400 px-3 py-1 rounded-full border border-blue-500/30 hover:bg-blue-600/40 transition-all font-bold flex items-center gap-2">
-               {isAnalyzing && <Loader2 size={10} className="animate-spin" />} {t.analyze}
-             </button>
+          {!fullScreen && (
+            <button 
+              onClick={handleDeepAnalysis} 
+              disabled={isAnalyzing} 
+              className="text-[10px] bg-blue-600 text-white px-4 py-1.5 rounded-full hover:bg-blue-700 transition-all font-bold flex items-center gap-2 shadow-lg shadow-blue-600/20 disabled:opacity-50"
+            >
+              {isAnalyzing ? <Loader2 size={12} className="animate-spin" /> : <Zap size={12} />} {t.analyze}
+            </button>
           )}
         </div>
       </div>
-      <div className="flex-1 p-4 overflow-y-auto custom-scrollbar space-y-4">
+      
+      <div className="flex-1 p-5 overflow-y-auto custom-scrollbar space-y-6">
         {messages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center opacity-40 px-6">
-            <Bot size={48} className="mb-4 text-gray-500" />
-            <p className="text-sm font-medium">我是您的 AI 策略大師</p>
-            <p className="text-[11px] mt-2">點擊上方「分析」獲取基於 TradingView 的深度報告。</p>
+          <div className="flex flex-col items-center justify-center h-full text-center opacity-30 px-10">
+            <Bot size={64} className="mb-6 text-gray-500" />
+            <p className="text-base font-bold text-gray-200">我是您的財經 AI 大師</p>
+            <p className="text-xs mt-3 leading-relaxed">請輸入問題或點擊上方「AI 深度分析」獲取基於實時數據的專業判斷。</p>
           </div>
         ) : (
           messages.map((m, i) => (
-            <div key={i} className={`flex flex-col gap-2 ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
-              <div className={`max-w-[90%] rounded-2xl p-3 text-xs leading-relaxed ${m.role === 'user' ? 'bg-blue-600 text-white rounded-br-none' : 'bg-white/5 border border-white/10 text-gray-200 rounded-bl-none italic font-serif shadow-inner'}`}>
-                <div className="flex items-center gap-2 mb-1 opacity-60">
-                  {m.role === 'user' ? <User size={10} /> : <Bot size={10} />}
-                  <span className="text-[9px] font-bold uppercase">{m.role === 'user' ? 'Investor' : 'Master Analyst'}</span>
+            <div key={i} className={`flex flex-col gap-2 ${m.role === 'user' ? 'items-end' : 'items-start animate-in slide-in-from-left-2'}`}>
+              <div className={`max-w-[85%] md:max-w-[75%] rounded-2xl px-4 py-3 text-[13px] leading-relaxed shadow-lg ${m.role === 'user' ? 'bg-blue-600 text-white rounded-br-none' : 'bg-white/5 border border-white/10 text-gray-200 rounded-bl-none italic font-medium'}`}>
+                <div className="flex items-center gap-2 mb-2 opacity-50 border-b border-white/10 pb-1">
+                  {m.role === 'user' ? <User size={12} /> : <Bot size={12} />}
+                  <span className="text-[10px] font-black uppercase tracking-widest">{m.role === 'user' ? 'Investor' : 'AI MASTER'}</span>
                 </div>
-                {m.text || (isAnalyzing && i === messages.length - 1 ? "..." : "")}
+                <div className="whitespace-pre-wrap">{m.text || (isAnalyzing && i === messages.length - 1 ? "大師正在思考市場變量..." : "")}</div>
                 {m.sources && m.sources.length > 0 && (
-                  <div className="mt-3 pt-3 border-t border-white/10 space-y-1">
+                  <div className="mt-4 pt-3 border-t border-white/10 grid grid-cols-1 gap-1">
+                    <span className="text-[9px] text-gray-500 font-bold uppercase mb-1">參考來源:</span>
                     {m.sources.map((s, idx) => (
-                      <a key={idx} href={s.uri} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-[10px] text-blue-400 hover:text-blue-300">
-                        <ExternalLink size={10} />
-                        <span className="truncate max-w-[200px]">{s.title}</span>
+                      <a key={idx} href={s.uri} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-[10px] text-blue-400 hover:text-blue-300 transition-colors py-0.5 group">
+                        <ExternalLink size={10} className="group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+                        <span className="truncate">{s.title}</span>
                       </a>
                     ))}
                   </div>
@@ -317,30 +333,24 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
             </div>
           ))
         )}
-        {isAnalyzing && messages.length > 0 && !messages[messages.length-1].text && (
-          <div className="flex justify-start">
-            <div className="bg-white/5 border border-white/10 rounded-2xl p-3">
-              <div className="flex gap-1 animate-pulse">
-                <div className="w-1.5 h-1.5 bg-blue-400 rounded-full"></div>
-                <div className="w-1.5 h-1.5 bg-blue-400 rounded-full" style={{animationDelay: '0.2s'}}></div>
-                <div className="w-1.5 h-1.5 bg-blue-400 rounded-full" style={{animationDelay: '0.4s'}}></div>
-              </div>
-            </div>
-          </div>
-        )}
         <div ref={chatEndRef} />
       </div>
-      <form onSubmit={handleSendMessage} className="p-3 bg-white/[0.02] border-t border-white/10 flex gap-2">
+      
+      <form onSubmit={handleSendMessage} className="p-4 bg-white/[0.04] border-t border-white/10 flex gap-3">
         <input 
           type="text" 
           value={inputValue} 
           onChange={e => setInputValue(e.target.value)} 
-          placeholder="詢問大師當前趨勢..." 
-          className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-xs outline-none focus:border-blue-500 transition-colors" 
+          placeholder="詢問大師當前趨勢或點位策略..." 
+          className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all" 
           disabled={isAnalyzing} 
         />
-        <button type="submit" disabled={!inputValue.trim() || isAnalyzing} className="bg-blue-600 text-white p-2.5 rounded-xl transition-all active:scale-95 disabled:opacity-50">
-          <Send size={14} />
+        <button 
+          type="submit" 
+          disabled={!inputValue.trim() || isAnalyzing} 
+          className="bg-blue-600 text-white p-3.5 rounded-2xl transition-all active:scale-90 hover:bg-blue-700 shadow-xl shadow-blue-600/20 disabled:opacity-30 disabled:grayscale"
+        >
+          <Send size={18} />
         </button>
       </form>
     </div>
@@ -357,15 +367,15 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
             <div className="flex flex-col">
               <div className="flex items-center gap-2">
                 <h2 className="text-2xl font-bold">{activeSymbol}</h2>
-                {!isActiveCrypto && !marketOpen && <span className="text-[9px] bg-red-500/10 text-red-400 px-2 py-0.5 rounded-full border border-red-500/20 flex items-center gap-1 font-bold"><Clock size={10} /> {t.marketClosed}</span>}
+                {!/USDT$|USDC$|BUSD$|BTC$|ETH$/.test(activeSymbol) && !marketOpen && <span className="text-[9px] bg-red-500/10 text-red-400 px-2 py-0.5 rounded-full border border-red-500/20 flex items-center gap-1 font-bold"><Clock size={10} /> {t.marketClosed}</span>}
               </div>
               <span className="text-[10px] text-gray-500 font-mono tracking-widest uppercase">{t.marketOverview}</span>
             </div>
             <div className="flex items-center gap-6">
-              {activePriceData && <PriceDisplay price={activePriceData.price} currencySymbol={currencySymbol} rate={rate} change={activePriceData.change} isMarketClosed={!isActiveCrypto && !marketOpen} language={state.language} />}
+              {prices[activeSymbol] && <PriceDisplay price={prices[activeSymbol].price} currencySymbol={CURRENCY_SYMBOLS[state.currency]} rate={EXCHANGE_RATES[state.currency]} change={prices[activeSymbol].change} isMarketClosed={!/USDT$|USDC$|BUSD$|BTC$|ETH$/.test(activeSymbol) && !marketOpen} language={state.language} />}
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={16} />
-                <input type="text" placeholder={t.placeholderSymbol} className="bg-white/5 border border-white/10 rounded-xl pl-10 pr-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none w-48 transition-all focus:w-64 text-sm"
+                <input type="text" placeholder={t.placeholderSymbol} className="bg-white/5 border border-white/10 rounded-xl pl-10 pr-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none w-48 transition-all focus:w-64 text-sm uppercase"
                   onKeyDown={(e) => {
                      if (e.key === 'Enter') {
                         const val = (e.target as HTMLInputElement).value.toUpperCase();
@@ -385,33 +395,32 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2 relative group">
               <div className="flex items-center justify-between px-1">
-                <div className="flex items-center gap-1">
-                  <h3 className="text-[9px] font-bold opacity-60 uppercase tracking-tighter">US Stocks</h3>
-                  {fngError && <AlertCircle size={8} className="text-red-500 animate-pulse" />}
-                </div>
+                <h3 className="text-[9px] font-bold opacity-60 uppercase tracking-tighter">US Stocks F&G</h3>
                 <button onClick={() => fetchFearGreedData()} disabled={isFetchingFNG} className={`p-1 hover:bg-white/10 rounded transition-colors ${isFetchingFNG ? 'animate-spin' : ''}`}><RefreshCw size={10} className="opacity-40" /></button>
               </div>
-              <FearGreedIndex value={stockSentiment?.score ?? 0} label={isFetchingFNG && !stockSentiment ? 'Loading...' : (stockSentiment?.label ?? (fngError ? 'Failed' : '...'))} isAnalyzing={isFetchingFNG} compact />
+              <FearGreedIndex value={stockSentiment?.score ?? 50} label={isFetchingFNG ? 'Updating...' : (stockSentiment?.label ?? (fngError ? 'Fetch Error' : 'Neutral'))} isAnalyzing={isFetchingFNG} compact />
             </div>
             <div className="space-y-2 relative group">
               <div className="flex items-center justify-between px-1">
-                <div className="flex items-center gap-1">
-                  <h3 className="text-[9px] font-bold opacity-60 uppercase tracking-tighter">Crypto</h3>
-                  {fngError && <AlertCircle size={8} className="text-red-500 animate-pulse" />}
-                </div>
+                <h3 className="text-[9px] font-bold opacity-60 uppercase tracking-tighter">Crypto F&G</h3>
                 <button onClick={() => fetchFearGreedData()} disabled={isFetchingFNG} className={`p-1 hover:bg-white/10 rounded transition-colors ${isFetchingFNG ? 'animate-spin' : ''}`}><RefreshCw size={10} className="opacity-40" /></button>
               </div>
-              <FearGreedIndex value={cryptoSentiment?.score ?? 0} label={isFetchingFNG && !cryptoSentiment ? 'Loading...' : (cryptoSentiment?.label ?? (fngError ? 'Failed' : '...'))} isAnalyzing={isFetchingFNG} compact />
+              <FearGreedIndex value={cryptoSentiment?.score ?? 50} label={isFetchingFNG ? 'Updating...' : (cryptoSentiment?.label ?? (fngError ? 'Fetch Error' : 'Neutral'))} isAnalyzing={isFetchingFNG} compact />
             </div>
           </div>
           
-          {renderAIAnalyst(false)}
+          {renderAIAnalystBox(false)}
         </div>
       </div>
 
       {isMaximized && (
-        <div className="fixed inset-0 z-[90] bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
-           {renderAIAnalyst(true)}
+        <div className="fixed inset-0 z-[90] bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
+           {renderAIAnalystBox(true)}
+           <div className="fixed top-8 right-8 z-[110]">
+             <button onClick={() => setIsMaximized(false)} className="p-3 bg-white/10 hover:bg-red-500 text-white rounded-full transition-all shadow-2xl active:scale-90">
+               <X size={24} />
+             </button>
+           </div>
         </div>
       )}
 
@@ -427,7 +436,7 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
                 <button key={s} onClick={() => { setActiveSymbol(s); setMessages([]); }} className={`px-5 py-4 rounded-2xl transition-all border flex flex-col gap-1 items-start group relative active:scale-95 ${isActive ? 'bg-blue-600 border-blue-600 text-white shadow-lg' : 'border-white/10 hover:border-white/30 bg-white/5 text-gray-400'}`}>
                   <div onClick={(e) => { e.stopPropagation(); setState(prev => { const updated = prev.watchlist.filter(w => w !== s); localStorage.setItem('watchlist', JSON.stringify(updated)); return { ...prev, watchlist: updated }; }); }} className={`absolute -top-2 -right-2 w-6 h-6 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10 ${isActive ? 'bg-white text-blue-600' : 'bg-red-500 text-white'}`}><X size={12} /></div>
                   <div className="flex items-center justify-between w-full"><span className="font-black text-sm">{s}</span>{pData && (<span className={`text-[9px] font-bold ${isClosed ? 'text-gray-500' : (pData.change >= 0 ? 'text-green-400' : 'text-red-400')} ${isActive ? 'text-white' : ''}`}>{isClosed ? '---' : `${pData.change >= 0 ? '+' : ''}${pData.change.toFixed(1)}%`}</span>)}</div>
-                  <div className={`text-xs font-mono font-bold ${isActive ? 'text-blue-100' : 'text-gray-200'}`}>{pData ? `${currencySymbol} ${(pData.price * rate).toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '---'}</div>
+                  <div className={`text-xs font-mono font-bold ${isActive ? 'text-blue-100' : 'text-gray-200'}`}>{pData ? `${CURRENCY_SYMBOLS[state.currency]} ${(pData.price * EXCHANGE_RATES[state.currency]).toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '---'}</div>
                   {isClosed && <span className="text-[7px] opacity-60 uppercase mt-1 bg-white/10 px-1 rounded flex items-center gap-1"><Clock size={8} /> {t.prevClose}</span>}
                 </button>
               );

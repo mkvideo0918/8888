@@ -1,10 +1,12 @@
 
 export type Language = 'en' | 'zh-TW';
 export type Currency = 'USD' | 'TWD' | 'MYR';
+export type AssetMarket = 'US' | 'Crypto' | 'TW' | 'MY' | 'HK';
 
 export interface PortfolioItem {
   id: string;
   symbol: string;
+  market: AssetMarket;
   type: 'Stock' | 'Crypto';
   buyDate: string;
   cost: number;

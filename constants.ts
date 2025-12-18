@@ -23,11 +23,16 @@ export const TRANSLATIONS: Record<Language, any> = {
     actions: 'Manage',
     currency: 'Base Currency',
     lang: 'App Language',
-    placeholderSymbol: 'Search e.g. BTCUSDT, NVDA',
+    placeholderSymbol: 'Search e.g. BTCUSDT, CRCL, NVDA',
     prevClose: 'Prev. Close',
-    marketClosed: 'Closed',
+    marketClosed: 'Market Closed',
     totalValue: 'Total Portfolio Value',
     totalProfit: 'Total Unrealized P/L',
+    aiAnalysis: 'AI Master Insight',
+    analyzing: 'Master is thinking...',
+    marketType: 'Market Type',
+    avgCost: 'Avg. Cost',
+    totalHoldings: 'Total Holdings'
   },
   'zh-TW': {
     dashboard: '實時行情',
@@ -50,11 +55,16 @@ export const TRANSLATIONS: Record<Language, any> = {
     actions: '操作',
     currency: '顯示幣別',
     lang: '顯示語言',
-    placeholderSymbol: '搜尋代碼，如 BTCUSDT, NVDA',
+    placeholderSymbol: '搜尋代碼，如 BTCUSDT, CRCL, NVDA',
     prevClose: '昨日收盤',
     marketClosed: '美股休市中',
     totalValue: '資產總市值',
     totalProfit: '總未實現盈虧',
+    aiAnalysis: 'AI 大師深度分析',
+    analyzing: '大師正在觀測盤勢...',
+    marketType: '市場分類',
+    avgCost: '平均成本',
+    totalHoldings: '總持有量'
   }
 };
 

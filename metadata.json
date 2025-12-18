@@ -1,0 +1,7 @@
+{
+  "name": "WealthWise AI Analyst",
+  "description": "An AI-powered economic analysis platform for stocks and crypto, featuring TradingView integration, portfolio tracking, and deep AI insights with support for TWD, MYR, and Traditional Chinese.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}

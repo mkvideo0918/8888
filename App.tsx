@@ -107,7 +107,7 @@ const Sidebar = memo(({ language }: { language: Language }) => {
         <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-lg flex items-center justify-center shadow-lg shadow-blue-600/20">
           <TrendingUp className="w-6 h-6 text-white" />
         </div>
-        <h1 className="text-xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-r from-white to-gray-400">WealthWise</h1>
+        <h1 className="text-xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400">WealthWise</h1>
       </div>
       <nav className="flex-1 space-y-2">
         {menuItems.map((item) => {
@@ -121,7 +121,7 @@ const Sidebar = memo(({ language }: { language: Language }) => {
           );
         })}
       </nav>
-      <div className="mt-auto p-4 glass-effect rounded-2xl text-[10px] text-gray-500 uppercase tracking-[0.2em] text-center border border-white/5">Master Engine v3.2</div>
+      <div className="mt-auto p-4 glass-effect rounded-2xl text-[10px] text-gray-500 uppercase tracking-[0.2em] text-center border border-white/5">Master Engine v3.3 Stable</div>
     </div>
   );
 });
@@ -212,18 +212,19 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
   const handleDeepAnalysis = async () => {
     if (isAnalyzing) return;
     setIsAnalyzing(true);
-    setMessages([{ role: 'model', text: "大師正在透過雲端分析市場趨勢與技術點位..." }]); 
+    const loadingMsg = state.language === 'zh-TW' ? "正在調用大師智庫進行深度市場分析..." : "Analyzing market with Master AI...";
+    setMessages([{ role: 'model', text: loadingMsg }]); 
     try {
       const result = await analyzeMarket(activeSymbol, state.language);
       if (result) {
-        const report = `【深度報告：${activeSymbol}】\n決策：${result.recommendation}\n理由：${result.summary}\n支撐/壓力：${result.keyLevels.join(', ')}\n\n詳情：${result.detailedAnalysis}`;
+        const report = `【深度大師報告：${activeSymbol}】\n決策建議：${result.recommendation}\n市場評價：${result.summary}\n支撐壓力：${result.keyLevels.join(' | ')}\n\n詳細見解：\n${result.detailedAnalysis}`;
         setMessages([{ role: 'model', text: report }]);
         setState(prev => ({ ...prev, history: [{ id: Date.now().toString(), symbol: activeSymbol, timestamp: Date.now(), ...result }, ...prev.history].slice(0, 50) }));
       } else {
-        setMessages([{ role: 'model', text: "大師目前無法連線，請檢查 API Key 或網路狀態。" }]);
+        setMessages([{ role: 'model', text: "連線異常，大師目前無法接收信號。" }]);
       }
     } catch(e) {
-      setMessages([{ role: 'model', text: "分析失敗，請確認代碼是否正確。" }]);
+      setMessages([{ role: 'model', text: "分析失敗，可能是 API 次數限制或代碼無效。" }]);
     } finally { setIsAnalyzing(false); }
   };
 
@@ -233,9 +234,10 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
     const userMsg = inputValue.trim();
     setInputValue('');
     
-    // 只發送有內容的歷史
-    const history = messages.filter(m => m.text && m.text.length > 5);
+    // 取出之前的有效對話歷史
+    const history = [...messages];
     
+    // 即時在 UI 加入 user 訊息與空的 model 訊息
     setMessages(prev => [
       ...prev, 
       { role: 'user', text: userMsg },
@@ -244,30 +246,32 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
     
     setIsAnalyzing(true);
     try {
-      await getChatResponseStream(activeSymbol, history, userMsg, state.language, (text) => {
+      await getChatResponseStream(activeSymbol, history, userMsg, state.language, (streamedText) => {
         setMessages(prev => {
           const updated = [...prev];
-          if (updated.length > 0) updated[updated.length - 1].text = text;
+          if (updated.length > 0) {
+            updated[updated.length - 1].text = streamedText;
+          }
           return updated;
         });
       });
     } catch (error) {
-      console.error("Stream Error", error);
+      console.error("Stream Fatal Error:", error);
     } finally {
       setIsAnalyzing(false);
     }
   };
 
   const renderAnalyst = (isFull = false) => (
-    <div className={`glass-effect rounded-2xl flex flex-col border border-white/10 relative overflow-hidden shadow-2xl transition-all duration-300 ${isFull ? 'fixed inset-4 md:inset-10 z-[100] bg-neutral-950/98' : 'h-[400px]'}`}>
-      <div className="p-4 border-b border-white/10 flex items-center justify-between bg-white/[0.03]">
+    <div className={`glass-effect rounded-2xl flex flex-col border border-white/10 relative overflow-hidden shadow-2xl transition-all duration-300 ${isFull ? 'fixed inset-4 md:inset-10 z-[100] bg-[#0c0c0c]' : 'h-[450px]'}`}>
+      <div className="p-4 border-b border-white/10 flex items-center justify-between bg-white/[0.04]">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-full bg-blue-600/20 flex items-center justify-center border border-blue-500/30">
             <Bot size={18} className="text-blue-400" />
           </div>
           <div>
             <h3 className="text-sm font-bold tracking-wide uppercase">{t.aiAnalyst}</h3>
-            <span className="text-[8px] text-blue-500 font-mono tracking-widest uppercase animate-pulse">Master Engine v3.2</span>
+            <span className="text-[8px] text-blue-500 font-mono tracking-widest uppercase animate-pulse">Master Engine v3.3 Stable</span>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -282,22 +286,24 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
         </div>
       </div>
       
-      <div className="flex-1 p-5 overflow-y-auto custom-scrollbar space-y-4">
+      <div className="flex-1 p-5 overflow-y-auto custom-scrollbar space-y-5 bg-[#0e0e0e]/50">
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center opacity-30">
-            <Bot size={64} className="mb-4 text-gray-500" />
-            <p className="text-base font-bold">大師已上線，隨時待命</p>
-            <p className="text-[11px] mt-2 leading-relaxed">輸入您的問題（如：${activeSymbol} 現在可以買嗎？）或點擊「AI 深度分析」獲取完整報告。</p>
+            <Bot size={56} className="mb-4 text-gray-400" />
+            <p className="text-base font-bold text-white">大師智庫已連線</p>
+            <p className="text-[11px] mt-2 leading-relaxed px-10">
+              您可以詢問有關市場的任何問題，例如：「${activeSymbol} 現在的支撐位在哪？」<br/>或是點擊「AI 深度分析」產生完整投資報告。
+            </p>
           </div>
         ) : (
           messages.map((m, i) => (
-            <div key={i} className={`flex flex-col gap-2 ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
-              <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-[13px] leading-relaxed shadow-lg ${m.role === 'user' ? 'bg-blue-600 text-white rounded-br-none' : 'bg-white/5 border border-white/10 text-gray-200 rounded-bl-none font-medium'}`}>
-                <div className="flex items-center gap-2 mb-1 opacity-50 text-[9px] font-black tracking-widest uppercase border-b border-white/5 pb-1">
+            <div key={i} className={`flex flex-col gap-2 ${m.role === 'user' ? 'items-end' : 'items-start'} animate-in fade-in slide-in-from-bottom-2`}>
+              <div className={`max-w-[88%] rounded-2xl px-5 py-4 text-[13px] leading-relaxed shadow-xl ${m.role === 'user' ? 'bg-blue-600 text-white rounded-br-none' : 'bg-white/5 border border-white/10 text-gray-200 rounded-bl-none font-medium'}`}>
+                <div className="flex items-center gap-2 mb-2 opacity-50 text-[9px] font-black tracking-widest uppercase border-b border-white/5 pb-1">
                   {m.role === 'user' ? <User size={10} /> : <Bot size={10} />}
                   <span>{m.role === 'user' ? 'Investor' : 'AI MASTER'}</span>
                 </div>
-                <div className="whitespace-pre-wrap">{m.text || (isAnalyzing && i === messages.length - 1 ? "正在連線智庫..." : "")}</div>
+                <div className="whitespace-pre-wrap font-sans">{m.text || (isAnalyzing && i === messages.length - 1 ? "正在連線智庫核心..." : "")}</div>
               </div>
             </div>
           ))
@@ -305,21 +311,21 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
         <div ref={chatEndRef} />
       </div>
       
-      <form onSubmit={handleSendMessage} className="p-4 bg-white/[0.05] border-t border-white/10 flex gap-3">
+      <form onSubmit={handleSendMessage} className="p-4 bg-white/[0.03] border-t border-white/10 flex gap-3">
         <input 
           type="text" 
           value={inputValue} 
           onChange={e => setInputValue(e.target.value)} 
-          placeholder="詢問大師或輸入問題..." 
-          className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 transition-all" 
+          placeholder="在此詢問大師市場見解..." 
+          className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 transition-all placeholder:text-gray-600" 
           disabled={isAnalyzing} 
         />
         <button 
           type="submit" 
           disabled={!inputValue.trim() || isAnalyzing} 
-          className="bg-blue-600 text-white p-4 rounded-2xl transition-all active:scale-95 hover:bg-blue-700 shadow-xl disabled:opacity-30"
+          className="bg-blue-600 text-white px-5 rounded-2xl transition-all active:scale-95 hover:bg-blue-700 shadow-xl disabled:opacity-30 disabled:cursor-not-allowed"
         >
-          <Send size={20} />
+          <Send size={18} />
         </button>
       </form>
     </div>
@@ -383,10 +389,12 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
       </div>
 
       {isMaximized && (
-        <div className="fixed inset-0 z-[90] bg-black/90 backdrop-blur-xl animate-in fade-in duration-500 flex items-center justify-center">
-           {renderAnalyst(true)}
-           <div className="fixed top-6 right-6 z-[110]">
-             <button onClick={() => setIsMaximized(false)} className="p-4 bg-white/10 hover:bg-red-500/80 text-white rounded-full transition-all shadow-2xl active:scale-90 border border-white/10">
+        <div className="fixed inset-0 z-[110] bg-black/95 backdrop-blur-xl animate-in fade-in duration-500 flex items-center justify-center">
+           <div className="w-full max-w-5xl px-4 h-[90vh]">
+             {renderAnalyst(true)}
+           </div>
+           <div className="fixed top-6 right-6 z-[120]">
+             <button onClick={() => setIsMaximized(false)} className="p-4 bg-white/10 hover:bg-red-500 text-white rounded-full transition-all shadow-2xl active:scale-90 border border-white/10">
                <X size={28} />
              </button>
            </div>

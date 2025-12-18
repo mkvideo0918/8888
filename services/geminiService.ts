@@ -1,5 +1,14 @@
 
-import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
+
+// 取得 AI 實例的工廠函式 - 確保每次呼叫都能抓到最新注入的 API_KEY
+const getAI = () => {
+  const apiKey = process.env.API_KEY;
+  if (!apiKey || apiKey === "undefined") {
+    throw new Error("API_KEY_MISSING");
+  }
+  return new GoogleGenAI({ apiKey });
+};
 
 // 輔助函式：確保 JSON 格式正確
 const extractJson = (text: string) => {
@@ -12,15 +21,15 @@ const extractJson = (text: string) => {
   }
 };
 
-// 獲取恐慌貪婪指數 - 純 AI 預測版 (最穩定)
+// 獲取恐慌貪婪指數
 export const getFearGreedIndices = async (language: string) => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   try {
+    const ai = getAI();
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: "請根據 2025 年初的全球宏觀經濟趨勢（通膨、利率、美股與加密貨幣走勢），估算目前的市場恐慌與貪婪指數（0-100）。",
+      contents: "Estimate current global market Fear & Greed Index (0-100) for Stocks and Crypto based on 2025 macro trends.",
       config: {
-        systemInstruction: "你是一個金融數據估算工具。僅輸出 JSON 格式：{ \"stock\": { \"score\": 數字, \"label\": \"字串\" }, \"crypto\": { \"score\": 數字, \"label\": \"字串\" } }。不要解釋。",
+        systemInstruction: "Output ONLY JSON: { \"stock\": { \"score\": number, \"label\": \"string\" }, \"crypto\": { \"score\": number, \"label\": \"string\" } }",
         responseMimeType: "application/json",
       }
     });
@@ -31,15 +40,14 @@ export const getFearGreedIndices = async (language: string) => {
   }
 };
 
-// 深度分析報告 - 移除搜尋，確保成功
+// 深度分析報告
 export const analyzeMarket = async (symbol: string, language: string) => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const isChinese = language === 'zh-TW';
-  
-  const prompt = `請針對金融商品 "${symbol}" 進行深度大師分析。包含投資建議、技術支撐壓力位以及詳細趨勢預測。`;
-  const systemInstruction = `你是一位享譽全球的金融大師。你的分析應專業且詳盡。語言：${isChinese ? '繁體中文' : 'English'}。`;
+  const prompt = `深度分析 "${symbol}"：包含投資建議、支撐壓力位與趨勢預估。`;
+  const systemInstruction = `你是一位專業金融大師。語言：${isChinese ? '繁體中文' : 'English'}。`;
 
   try {
+    const ai = getAI();
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: prompt,
@@ -62,55 +70,40 @@ export const analyzeMarket = async (symbol: string, language: string) => {
     });
     return extractJson(response.text);
   } catch (error: any) {
-    console.error("Analysis Error:", error);
-    return {
-      summary: "連線分析引擎失敗",
-      recommendation: "Neutral",
-      detailedAnalysis: `無法產生報告：${error.message || '未知錯誤'}。請確認 API 金鑰權限。`,
-      sentimentScore: 50,
-      sentimentLabel: "Error",
-      keyLevels: ["N/A"]
-    };
+    if (error.message === "API_KEY_MISSING") throw error;
+    return null;
   }
 };
 
-// 對話功能 (Stream) - 核心重構，確保 100% 穩定
+// 對話功能 (Stream)
 export const getChatResponseStream = async (symbol: string, history: any[], message: string, language: string, onChunk: (text: string) => void) => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const isChinese = language === 'zh-TW';
-
-  // 1. 嚴格過濾與整理歷史紀錄，確保 roles 交替
-  const validContents: any[] = [];
-  let expectedRole = 'user'; // 第一筆必須是 user
-
-  // 我們只拿最後 6 筆有效的對話，防止 context 過長或格式混亂
-  const cleanHistory = history.filter(m => m.text && m.text.trim().length > 0);
   
-  for (const m of cleanHistory) {
+  // 整理歷史，確保角色嚴格交替
+  const validContents: any[] = [];
+  let lastRole = "";
+  history.filter(m => m.text && m.text.trim()).forEach(m => {
     const role = m.role === 'user' ? 'user' : 'model';
-    if (role === expectedRole) {
+    if (role !== lastRole) {
       validContents.push({ role, parts: [{ text: m.text }] });
-      expectedRole = role === 'user' ? 'model' : 'user';
+      lastRole = role;
     }
-  }
+  });
 
-  // 2. 確保最後一筆是 user 提問
-  if (expectedRole === 'user') {
-    validContents.push({ role: 'user', parts: [{ text: message }] });
+  // 確保最後是 user 提問
+  if (lastRole === 'user') {
+    validContents[validContents.length - 1].parts[0].text += `\n${message}`;
   } else {
-    // 如果上一筆已經是 user，就合併訊息
-    const lastIdx = validContents.length - 1;
-    validContents[lastIdx].parts[0].text += `\n${message}`;
+    validContents.push({ role: 'user', parts: [{ text: message }] });
   }
 
   try {
+    const ai = getAI();
     const responseStream = await ai.models.generateContentStream({
       model: 'gemini-3-flash-preview',
       contents: validContents,
       config: { 
-        systemInstruction: `你是 WealthWise 的全球首席金融大師。分析商品：${symbol}。你的回答要充滿智慧、精確且易於理解。語言：${isChinese ? '繁體中文' : 'English'}。`,
-        temperature: 0.7,
-        topP: 0.95,
+        systemInstruction: `你是 WealthWise 金融大師。分析：${symbol}。專業、準確、具啟發性。語言：${isChinese ? '繁體中文' : 'English'}。`,
       },
     });
 
@@ -122,15 +115,11 @@ export const getChatResponseStream = async (symbol: string, history: any[], mess
         onChunk(fullText);
       }
     }
-    
-    if (!fullText) throw new Error("API 沒有回傳任何內容");
     return fullText;
   } catch (error: any) {
-    console.error("Stream Error Detail:", error);
-    const errorMsg = isChinese 
-      ? `【系統連線故障】\n原因：${error.message || 'API 請求被拒絕'}\n提示：請檢查您的 API Key 是否有效，或嘗試更換網路環境。` 
-      : `【Connection Error】\nReason: ${error.message || 'API request rejected'}\nPlease check your API key or network.`;
-    onChunk(errorMsg);
-    return errorMsg;
+    if (error.message === "API_KEY_MISSING") throw error;
+    const msg = isChinese ? `連線錯誤: ${error.message}` : `Error: ${error.message}`;
+    onChunk(msg);
+    return msg;
   }
 };

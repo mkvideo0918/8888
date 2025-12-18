@@ -27,7 +27,9 @@ import {
   Gauge,
   RefreshCw,
   AlertCircle,
-  Loader2
+  Loader2,
+  Maximize2,
+  Minimize2
 } from 'lucide-react';
 import { AppState, Language, Currency, PortfolioItem, AnalysisHistory } from './types';
 import { TRANSLATIONS, CURRENCY_SYMBOLS, EXCHANGE_RATES } from './constants';
@@ -119,7 +121,7 @@ const Sidebar = memo(({ language }: { language: Language }) => {
           );
         })}
       </nav>
-      <div className="mt-auto p-4 glass-effect rounded-2xl text-[10px] text-gray-500 uppercase tracking-[0.2em] text-center border border-white/5">Master Engine v2.1</div>
+      <div className="mt-auto p-4 glass-effect rounded-2xl text-[10px] text-gray-500 uppercase tracking-[0.2em] text-center border border-white/5">Master Engine v2.2</div>
     </div>
   );
 });
@@ -127,6 +129,7 @@ const Sidebar = memo(({ language }: { language: Language }) => {
 const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.Dispatch<React.SetStateAction<AppState>> }) => {
   const [activeSymbol, setActiveSymbol] = useState(state.watchlist[0]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isMaximized, setIsMaximized] = useState(false);
   const [isFetchingFNG, setIsFetchingFNG] = useState(false);
   const [fngError, setFngError] = useState(false);
   const [messages, setMessages] = useState<{role: 'user' | 'model', text: string, sources?: any[]}[]>([]);
@@ -146,12 +149,11 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
   const chatEndRef = useRef<HTMLDivElement>(null);
   const t = TRANSLATIONS[state.language];
 
-  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, isAnalyzing]);
 
   const fetchFearGreedData = useCallback(async (retryCount = 0) => {
     if (isFetchingFNG && retryCount === 0) return;
     setIsFetchingFNG(true);
-    setFngError(false);
     try {
       const results = await getFearGreedIndices(state.language);
       if (results && results.stock && results.crypto) {
@@ -160,16 +162,10 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
         localStorage.setItem('cache_fng_stock', JSON.stringify(results.stock));
         localStorage.setItem('cache_fng_crypto', JSON.stringify(results.crypto));
         setFngError(false);
-      } else {
-        throw new Error("Empty results");
       }
     } catch (e) {
-      console.error("F&G Fetch Error:", e);
-      if (retryCount < 2) {
-        setTimeout(() => fetchFearGreedData(retryCount + 1), 3000);
-      } else {
-        setFngError(true);
-      }
+      if (retryCount < 2) setTimeout(() => fetchFearGreedData(retryCount + 1), 3000);
+      else setFngError(true);
     } finally {
       setIsFetchingFNG(false);
     }
@@ -177,7 +173,7 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
 
   useEffect(() => {
     fetchFearGreedData();
-    const interval = setInterval(fetchFearGreedData, 1800000); // 30 mins
+    const interval = setInterval(fetchFearGreedData, 1800000);
     return () => clearInterval(interval);
   }, []);
 
@@ -217,14 +213,16 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
   const handleDeepAnalysis = async () => {
     if (isAnalyzing) return;
     setIsAnalyzing(true);
-    setMessages([]);
+    setMessages([{ role: 'model', text: "" }]); // 佔位
     try {
       const result = await analyzeMarket(activeSymbol, state.language);
       if (result) {
-        const initialMessage = `【TradingView 實時診斷報告：${activeSymbol}】\n決策建議：${result.recommendation}\n關鍵水位：${result.keyLevels.join(', ')}\n\n${result.detailedAnalysis}`;
-        setMessages([{ role: 'model', text: initialMessage, sources: result.sources }]);
+        const report = `【TradingView 診斷：${activeSymbol}】\n決策：${result.recommendation}\n點位：${result.keyLevels.join(', ')}\n\n${result.detailedAnalysis}`;
+        setMessages([{ role: 'model', text: report, sources: result.sources }]);
         setState(prev => ({ ...prev, history: [{ id: Date.now().toString(), symbol: activeSymbol, timestamp: Date.now(), ...result }, ...prev.history].slice(0, 50) }));
       }
+    } catch(e) {
+      setMessages([{ role: 'model', text: "分析失敗，請重試。" }]);
     } finally { setIsAnalyzing(false); }
   };
 
@@ -234,6 +232,9 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
     const userMsg = inputValue.trim();
     setInputValue('');
     
+    // 預先過濾出有效的對話歷史 (僅保留文字內容)
+    const validHistory = messages.filter(m => m.text && m.text.length > 0);
+    
     setMessages(prev => [
       ...prev, 
       { role: 'user', text: userMsg },
@@ -242,23 +243,108 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
     
     setIsAnalyzing(true);
     
-    await getChatResponseStream(activeSymbol, messages, userMsg, state.language, (streamedText) => {
-      setMessages(prev => {
-        const newMessages = [...prev];
-        if (newMessages.length > 0) {
-          newMessages[newMessages.length - 1].text = streamedText;
-        }
-        return newMessages;
+    try {
+      await getChatResponseStream(activeSymbol, validHistory, userMsg, state.language, (streamedText) => {
+        setMessages(prev => {
+          const newMessages = [...prev];
+          if (newMessages.length > 0) {
+            newMessages[newMessages.length - 1].text = streamedText;
+          }
+          return newMessages;
+        });
       });
-    });
-    
-    setIsAnalyzing(false);
+    } catch (error) {
+       console.error("Stream failed", error);
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   const currencySymbol = CURRENCY_SYMBOLS[state.currency];
   const rate = EXCHANGE_RATES[state.currency];
   const activePriceData = prices[activeSymbol];
   const isActiveCrypto = /USDT$|USDC$|BUSD$|BTC$|ETH$/.test(activeSymbol);
+
+  // 渲染 AI 大師聊天組件
+  const renderAIAnalyst = (fullWidth = false) => (
+    <div className={`glass-effect rounded-2xl flex flex-col border border-white/10 relative overflow-hidden shadow-2xl transition-all duration-300 ${fullWidth ? 'fixed inset-4 z-[100] bg-[#0a0a0a]/95' : 'h-[400px]'}`}>
+      <div className="p-4 border-b border-white/10 flex items-center justify-between bg-white/[0.02]">
+        <div className="flex items-center gap-2">
+          <ShieldCheck size={18} className="text-blue-400" />
+          <h3 className="text-sm font-bold tracking-wide uppercase">{t.aiAnalyst}</h3>
+        </div>
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={() => setIsMaximized(!isMaximized)} 
+            className="p-1.5 hover:bg-white/10 rounded-lg text-gray-400 hover:text-white transition-colors"
+          >
+            {isMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+          </button>
+          {!fullWidth && (
+             <button onClick={handleDeepAnalysis} disabled={isAnalyzing} className="text-[10px] bg-blue-600/20 text-blue-400 px-3 py-1 rounded-full border border-blue-500/30 hover:bg-blue-600/40 transition-all font-bold flex items-center gap-2">
+               {isAnalyzing && <Loader2 size={10} className="animate-spin" />} {t.analyze}
+             </button>
+          )}
+        </div>
+      </div>
+      <div className="flex-1 p-4 overflow-y-auto custom-scrollbar space-y-4">
+        {messages.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full text-center opacity-40 px-6">
+            <Bot size={48} className="mb-4 text-gray-500" />
+            <p className="text-sm font-medium">我是您的 AI 策略大師</p>
+            <p className="text-[11px] mt-2">點擊上方「分析」獲取基於 TradingView 的深度報告。</p>
+          </div>
+        ) : (
+          messages.map((m, i) => (
+            <div key={i} className={`flex flex-col gap-2 ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
+              <div className={`max-w-[90%] rounded-2xl p-3 text-xs leading-relaxed ${m.role === 'user' ? 'bg-blue-600 text-white rounded-br-none' : 'bg-white/5 border border-white/10 text-gray-200 rounded-bl-none italic font-serif shadow-inner'}`}>
+                <div className="flex items-center gap-2 mb-1 opacity-60">
+                  {m.role === 'user' ? <User size={10} /> : <Bot size={10} />}
+                  <span className="text-[9px] font-bold uppercase">{m.role === 'user' ? 'Investor' : 'Master Analyst'}</span>
+                </div>
+                {m.text || (isAnalyzing && i === messages.length - 1 ? "..." : "")}
+                {m.sources && m.sources.length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-white/10 space-y-1">
+                    {m.sources.map((s, idx) => (
+                      <a key={idx} href={s.uri} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-[10px] text-blue-400 hover:text-blue-300">
+                        <ExternalLink size={10} />
+                        <span className="truncate max-w-[200px]">{s.title}</span>
+                      </a>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))
+        )}
+        {isAnalyzing && messages.length > 0 && !messages[messages.length-1].text && (
+          <div className="flex justify-start">
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-3">
+              <div className="flex gap-1 animate-pulse">
+                <div className="w-1.5 h-1.5 bg-blue-400 rounded-full"></div>
+                <div className="w-1.5 h-1.5 bg-blue-400 rounded-full" style={{animationDelay: '0.2s'}}></div>
+                <div className="w-1.5 h-1.5 bg-blue-400 rounded-full" style={{animationDelay: '0.4s'}}></div>
+              </div>
+            </div>
+          </div>
+        )}
+        <div ref={chatEndRef} />
+      </div>
+      <form onSubmit={handleSendMessage} className="p-3 bg-white/[0.02] border-t border-white/10 flex gap-2">
+        <input 
+          type="text" 
+          value={inputValue} 
+          onChange={e => setInputValue(e.target.value)} 
+          placeholder="詢問大師當前趨勢..." 
+          className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-xs outline-none focus:border-blue-500 transition-colors" 
+          disabled={isAnalyzing} 
+        />
+        <button type="submit" disabled={!inputValue.trim() || isAnalyzing} className="bg-blue-600 text-white p-2.5 rounded-xl transition-all active:scale-95 disabled:opacity-50">
+          <Send size={14} />
+        </button>
+      </form>
+    </div>
+  );
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500 pb-20">
@@ -303,20 +389,9 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
                   <h3 className="text-[9px] font-bold opacity-60 uppercase tracking-tighter">US Stocks</h3>
                   {fngError && <AlertCircle size={8} className="text-red-500 animate-pulse" />}
                 </div>
-                <button 
-                  onClick={() => fetchFearGreedData()} 
-                  disabled={isFetchingFNG}
-                  className={`p-1 hover:bg-white/10 rounded transition-colors ${isFetchingFNG ? 'animate-spin' : ''}`}
-                >
-                  <RefreshCw size={10} className="opacity-40" />
-                </button>
+                <button onClick={() => fetchFearGreedData()} disabled={isFetchingFNG} className={`p-1 hover:bg-white/10 rounded transition-colors ${isFetchingFNG ? 'animate-spin' : ''}`}><RefreshCw size={10} className="opacity-40" /></button>
               </div>
-              <FearGreedIndex 
-                value={stockSentiment?.score ?? 0} 
-                label={isFetchingFNG && !stockSentiment ? 'Loading...' : (stockSentiment?.label ?? (fngError ? 'Fetch Failed' : '...'))} 
-                isAnalyzing={isFetchingFNG} 
-                compact 
-              />
+              <FearGreedIndex value={stockSentiment?.score ?? 0} label={isFetchingFNG && !stockSentiment ? 'Loading...' : (stockSentiment?.label ?? (fngError ? 'Failed' : '...'))} isAnalyzing={isFetchingFNG} compact />
             </div>
             <div className="space-y-2 relative group">
               <div className="flex items-center justify-between px-1">
@@ -324,66 +399,21 @@ const Dashboard = memo(({ state, setState }: { state: AppState, setState: React.
                   <h3 className="text-[9px] font-bold opacity-60 uppercase tracking-tighter">Crypto</h3>
                   {fngError && <AlertCircle size={8} className="text-red-500 animate-pulse" />}
                 </div>
-                <button 
-                  onClick={() => fetchFearGreedData()} 
-                  disabled={isFetchingFNG}
-                  className={`p-1 hover:bg-white/10 rounded transition-colors ${isFetchingFNG ? 'animate-spin' : ''}`}
-                >
-                  <RefreshCw size={10} className="opacity-40" />
-                </button>
+                <button onClick={() => fetchFearGreedData()} disabled={isFetchingFNG} className={`p-1 hover:bg-white/10 rounded transition-colors ${isFetchingFNG ? 'animate-spin' : ''}`}><RefreshCw size={10} className="opacity-40" /></button>
               </div>
-              <FearGreedIndex 
-                value={cryptoSentiment?.score ?? 0} 
-                label={isFetchingFNG && !cryptoSentiment ? 'Loading...' : (cryptoSentiment?.label ?? (fngError ? 'Fetch Failed' : '...'))} 
-                isAnalyzing={isFetchingFNG} 
-                compact 
-              />
+              <FearGreedIndex value={cryptoSentiment?.score ?? 0} label={isFetchingFNG && !cryptoSentiment ? 'Loading...' : (cryptoSentiment?.label ?? (fngError ? 'Failed' : '...'))} isAnalyzing={isFetchingFNG} compact />
             </div>
           </div>
           
-          <div className="glass-effect rounded-2xl flex flex-col h-[400px] border border-white/10 relative overflow-hidden shadow-xl">
-            <div className="p-4 border-b border-white/10 flex items-center justify-between bg-white/[0.02]">
-              <div className="flex items-center gap-2"><ShieldCheck size={18} className="text-blue-400" /><h3 className="text-sm font-bold tracking-wide uppercase">{t.aiAnalyst}</h3></div>
-              <button onClick={handleDeepAnalysis} disabled={isAnalyzing} className="text-[10px] bg-blue-600/20 text-blue-400 px-3 py-1 rounded-full border border-blue-500/30 hover:bg-blue-600/40 transition-all font-bold flex items-center gap-2">
-                {isAnalyzing ? <Loader2 size={10} className="animate-spin" /> : null} {t.analyze}
-              </button>
-            </div>
-            <div className="flex-1 p-4 overflow-y-auto custom-scrollbar space-y-4">
-              {messages.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-center opacity-40 px-6"><Bot size={48} className="mb-4 text-gray-500" /><p className="text-sm font-medium">我是您的 AI 策略大師</p><p className="text-[11px] mt-2">點擊上方「分析」獲取最新報告。</p></div>
-              ) : (
-                messages.map((m, i) => (
-                  <div key={i} className={`flex flex-col gap-2 ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
-                    {m.text && (
-                      <div className={`max-w-[90%] rounded-2xl p-3 text-xs leading-relaxed ${m.role === 'user' ? 'bg-blue-600 text-white rounded-br-none' : 'bg-white/5 border border-white/10 text-gray-200 rounded-bl-none italic font-serif shadow-inner'}`}>
-                        <div className="flex items-center gap-2 mb-1 opacity-60">{m.role === 'user' ? <User size={10} /> : <Bot size={10} />}<span className="text-[9px] font-bold uppercase">{m.role === 'user' ? 'Investor' : 'Master Analyst'}</span></div>
-                        {m.text}
-                        {m.sources && m.sources.length > 0 && <div className="mt-3 pt-3 border-t border-white/10 space-y-1">{m.sources.map((s, idx) => (<a key={idx} href={s.uri} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-[10px] text-blue-400 hover:text-blue-300"><ExternalLink size={10} /><span className="truncate max-w-[180px]">{s.title}</span></a>))}</div>}
-                      </div>
-                    )}
-                  </div>
-                ))
-              )}
-              {isAnalyzing && messages.length > 0 && !messages[messages.length-1].text && (
-                <div className="flex justify-start">
-                  <div className="bg-white/5 border border-white/10 rounded-2xl p-3 flex items-center gap-2">
-                    <div className="flex gap-1 animate-pulse">
-                      <div className="w-1.5 h-1.5 bg-blue-400 rounded-full"></div>
-                      <div className="w-1.5 h-1.5 bg-blue-400 rounded-full" style={{animationDelay: '0.2s'}}></div>
-                      <div className="w-1.5 h-1.5 bg-blue-400 rounded-full" style={{animationDelay: '0.4s'}}></div>
-                    </div>
-                  </div>
-                </div>
-              )}
-              <div ref={chatEndRef} />
-            </div>
-            <form onSubmit={handleSendMessage} className="p-3 bg-white/[0.02] border-t border-white/10 flex gap-2">
-              <input type="text" value={inputValue} onChange={e => setInputValue(e.target.value)} placeholder="詢問大師..." className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-xs outline-none" disabled={isAnalyzing} />
-              <button type="submit" disabled={!inputValue.trim() || isAnalyzing} className="bg-blue-600 text-white p-2 rounded-xl transition-all active:scale-95"><Send size={14} /></button>
-            </form>
-          </div>
+          {renderAIAnalyst(false)}
         </div>
       </div>
+
+      {isMaximized && (
+        <div className="fixed inset-0 z-[90] bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
+           {renderAIAnalyst(true)}
+        </div>
+      )}
 
       <div className="glass-effect rounded-3xl p-8 border border-white/5">
          <div className="flex items-center justify-between mb-6">

@@ -31,7 +31,9 @@ import {
   Lock,
   ChevronDown,
   Check,
-  GripVertical
+  GripVertical,
+  ShieldCheck,
+  Key
 } from 'lucide-react';
 import { AppState, Account, PortfolioItem, AssetMarket, Language, Currency } from './types';
 import { TRANSLATIONS, CURRENCY_SYMBOLS, EXCHANGE_RATES } from './constants';
@@ -53,6 +55,75 @@ const INITIAL_STATE: AppState = {
   accounts: JSON.parse(localStorage.getItem('accounts') || `[${JSON.stringify(DEFAULT_ACCOUNT)}]`),
   activeAccountId: localStorage.getItem('activeAccountId') || 'default',
   privacyMode: localStorage.getItem('privacyMode') === 'true',
+};
+
+// 權限閘門組件
+// Fix: Added optional children to the props definition to resolve the error "Property 'children' is missing in type '{}' but required in type '{ children: React.ReactNode; }'"
+const MasterGatekeeper = ({ children }: { children?: React.ReactNode }) => {
+  const [isAuthorized, setIsAuthorized] = useState(localStorage.getItem('wealthwise_unlocked') === 'true');
+  const [inputKey, setInputKey] = useState('');
+  const [isError, setIsError] = useState(false);
+
+  // 從環境變數獲取密鑰，如果沒設定則預設為 "admin" (建議在 Vercel 設定 MASTER_KEY)
+  const MASTER_KEY = (process.env as any).MASTER_KEY || 'admin';
+
+  const handleUnlock = () => {
+    if (inputKey === MASTER_KEY) {
+      localStorage.setItem('wealthwise_unlocked', 'true');
+      setIsAuthorized(true);
+    } else {
+      setIsError(true);
+      setTimeout(() => setIsError(false), 500);
+    }
+  };
+
+  if (isAuthorized) return <>{children}</>;
+
+  return (
+    <div className="fixed inset-0 bg-[#050505] z-[999] flex items-center justify-center p-6">
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-indigo-600/10 blur-[120px] rounded-full"></div>
+        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-blue-600/10 blur-[120px] rounded-full"></div>
+      </div>
+
+      <div className={`glass-effect p-12 rounded-[3rem] w-full max-w-md border border-white/10 text-center space-y-8 transition-transform ${isError ? 'animate-shake' : ''}`}>
+        <div className="w-20 h-20 bg-gradient-to-br from-indigo-600 to-blue-700 rounded-3xl flex items-center justify-center mx-auto shadow-2xl shadow-indigo-600/20">
+          <ShieldCheck size={40} className="text-white" />
+        </div>
+        
+        <div>
+          <h2 className="text-2xl font-black tracking-tight mb-2">WealthWise Security</h2>
+          <p className="text-gray-500 text-sm font-medium leading-relaxed">System is encrypted. Please enter your master access key to proceed.</p>
+        </div>
+
+        <div className="space-y-4">
+          <div className="relative">
+            <Key className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
+            <input 
+              autoFocus
+              type="password" 
+              placeholder="Enter Access Key"
+              className={`w-full bg-white/5 border ${isError ? 'border-red-500' : 'border-white/10'} rounded-2xl py-4 pl-12 pr-4 outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all text-center tracking-widest font-mono`}
+              value={inputKey}
+              onChange={(e) => setInputKey(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleUnlock()}
+            />
+          </div>
+          <button 
+            onClick={handleUnlock}
+            className="w-full bg-white text-black py-4 rounded-2xl font-black text-sm uppercase tracking-widest hover:bg-gray-200 transition-colors active:scale-95"
+          >
+            Authenticate
+          </button>
+        </div>
+
+        <div className="pt-4 flex items-center justify-center gap-2 opacity-20">
+          <Lock size={12} />
+          <span className="text-[10px] font-black uppercase tracking-[0.3em]">End-to-End Encrypted</span>
+        </div>
+      </div>
+    </div>
+  );
 };
 
 const getYahooTicker = (symbol: string, market: AssetMarket) => {
@@ -179,133 +250,135 @@ const App = () => {
 
   return (
     <HashRouter>
-      <div className="min-h-screen bg-[#050505] text-white flex selection:bg-indigo-500/30">
-        
-        {/* 側邊欄 */}
-        <div className="w-64 h-screen fixed left-0 top-0 glass-effect border-r border-white/10 p-6 flex flex-col z-50">
-          <div className="flex items-center gap-3 mb-10 px-2">
-            <div className="w-10 h-10 bg-gradient-to-br from-indigo-600 to-blue-700 rounded-lg flex items-center justify-center shadow-lg shadow-blue-600/20">
-              <TrendingUp className="w-6 h-6 text-white" />
-            </div>
-            <h1 className="text-xl font-bold tracking-tight">WealthWise</h1>
-          </div>
+      <MasterGatekeeper>
+        <div className="min-h-screen bg-[#050505] text-white flex selection:bg-indigo-500/30">
           
-          <button 
-            onClick={() => setIsAccountModalOpen(true)}
-            className="mb-8 flex items-center justify-between w-full p-4 bg-white/5 border border-white/10 rounded-2xl hover:bg-white/10 transition-all group"
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full bg-indigo-500 flex items-center justify-center text-xs font-black uppercase">
-                {activeAccount.name[0]}
+          {/* 側邊欄 */}
+          <div className="w-64 h-screen fixed left-0 top-0 glass-effect border-r border-white/10 p-6 flex flex-col z-50">
+            <div className="flex items-center gap-3 mb-10 px-2">
+              <div className="w-10 h-10 bg-gradient-to-br from-indigo-600 to-blue-700 rounded-lg flex items-center justify-center shadow-lg shadow-blue-600/20">
+                <TrendingUp className="w-6 h-6 text-white" />
               </div>
-              <div className="text-left">
-                <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest leading-none mb-1">Active Account</p>
-                <p className="text-sm font-bold truncate max-w-[100px]">{activeAccount.name}</p>
-              </div>
+              <h1 className="text-xl font-bold tracking-tight">WealthWise</h1>
             </div>
-            <ChevronDown size={14} className="text-gray-500 group-hover:text-white transition-colors" />
-          </button>
+            
+            <button 
+              onClick={() => setIsAccountModalOpen(true)}
+              className="mb-8 flex items-center justify-between w-full p-4 bg-white/5 border border-white/10 rounded-2xl hover:bg-white/10 transition-all group"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-indigo-500 flex items-center justify-center text-xs font-black uppercase">
+                  {activeAccount.name[0]}
+                </div>
+                <div className="text-left">
+                  <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest leading-none mb-1">Active Account</p>
+                  <p className="text-sm font-bold truncate max-w-[100px]">{activeAccount.name}</p>
+                </div>
+              </div>
+              <ChevronDown size={14} className="text-gray-500 group-hover:text-white transition-colors" />
+            </button>
 
-          <nav className="flex-1 space-y-2">
-            {[
-              { path: '/', name: t.dashboard, icon: LayoutDashboard },
-              { path: '/portfolio', name: t.portfolio, icon: Wallet },
-              { path: '/settings', name: t.settings, icon: SettingsIcon },
-            ].map((item) => {
-              const Icon = item.icon;
-              return (
-                <Link 
-                  key={item.path} 
-                  to={item.path} 
-                  className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all group hover:bg-white/5 text-gray-400 hover:text-white`}
-                >
-                  <Icon size={18} />
-                  <span className="font-medium text-sm">{item.name}</span>
-                </Link>
-              );
-            })}
-          </nav>
-          
-          <div className="mt-auto space-y-4">
-             <button 
-               onClick={() => setState(prev => ({...prev, privacyMode: !prev.privacyMode}))}
-               className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl border transition-all font-bold text-xs ${state.privacyMode ? 'bg-indigo-600/20 border-indigo-500/50 text-indigo-400' : 'bg-white/5 border-white/10 text-gray-400'}`}
-             >
-               {state.privacyMode ? <EyeOff size={14} /> : <Eye size={14} />}
-               {state.privacyMode ? t.privacyOn : t.privacyOff}
-             </button>
-             <div className="p-4 glass-effect rounded-2xl text-[9px] text-gray-600 uppercase tracking-[0.2em] text-center border border-white/5 font-black">
-               WealthWise v5.3 Balanced
-             </div>
+            <nav className="flex-1 space-y-2">
+              {[
+                { path: '/', name: t.dashboard, icon: LayoutDashboard },
+                { path: '/portfolio', name: t.portfolio, icon: Wallet },
+                { path: '/settings', name: t.settings, icon: SettingsIcon },
+              ].map((item) => {
+                const Icon = item.icon;
+                return (
+                  <Link 
+                    key={item.path} 
+                    to={item.path} 
+                    className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all group hover:bg-white/5 text-gray-400 hover:text-white`}
+                  >
+                    <Icon size={18} />
+                    <span className="font-medium text-sm">{item.name}</span>
+                  </Link>
+                );
+              })}
+            </nav>
+            
+            <div className="mt-auto space-y-4">
+               <button 
+                 onClick={() => setState(prev => ({...prev, privacyMode: !prev.privacyMode}))}
+                 className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl border transition-all font-bold text-xs ${state.privacyMode ? 'bg-indigo-600/20 border-indigo-500/50 text-indigo-400' : 'bg-white/5 border-white/10 text-gray-400'}`}
+               >
+                 {state.privacyMode ? <EyeOff size={14} /> : <Eye size={14} />}
+                 {state.privacyMode ? t.privacyOn : t.privacyOff}
+               </button>
+               <div className="p-4 glass-effect rounded-2xl text-[9px] text-gray-600 uppercase tracking-[0.2em] text-center border border-white/5 font-black">
+                 WealthWise v5.5 Enterprise
+               </div>
+            </div>
           </div>
+
+          <main className="flex-1 ml-64 p-10 min-h-screen relative overflow-x-hidden">
+            <Routes>
+              <Route path="/" element={<DashboardView state={state} setState={setState} prices={prices} activeAccount={activeAccount} />} />
+              <Route path="/portfolio" element={<PortfolioView state={state} setState={setState} prices={prices} activeAccount={activeAccount} />} />
+              <Route path="/settings" element={<SettingsView state={state} setState={setState} activeAccount={activeAccount} />} />
+            </Routes>
+          </main>
+
+          {isAccountModalOpen && (
+            <div className="fixed inset-0 bg-black/90 backdrop-blur-xl z-[100] flex items-center justify-center p-6">
+               <div className="glass-effect p-10 rounded-[2.5rem] w-full max-w-lg border border-white/10 relative">
+                 <button onClick={() => setIsAccountModalOpen(false)} className="absolute top-8 right-8 text-gray-500 hover:text-white"><X size={24} /></button>
+                 
+                 {pendingAccountId ? (
+                   <div className="space-y-6 animate-in zoom-in-95 duration-200">
+                      <div className="text-center">
+                        <div className="w-16 h-16 bg-indigo-500/20 text-indigo-400 rounded-3xl flex items-center justify-center mx-auto mb-4"><Lock size={32} /></div>
+                        <h3 className="text-2xl font-black">{t.unlock}</h3>
+                        <p className="text-gray-500 text-sm mt-1">{t.enterPassword}</p>
+                      </div>
+                      <input 
+                        autoFocus
+                        type="password" 
+                        className={`w-full bg-white/5 border p-4 rounded-2xl outline-none text-center text-xl font-mono ${unlockError ? 'border-red-500 animate-shake' : 'border-white/10'}`}
+                        value={unlockPassword}
+                        onChange={e => { setUnlockPassword(e.target.value); setUnlockError(false); }}
+                        onKeyDown={e => e.key === 'Enter' && handleUnlock()}
+                      />
+                      <button onClick={handleUnlock} className="w-full bg-indigo-600 py-4 rounded-2xl font-black text-lg">解鎖並切換</button>
+                   </div>
+                 ) : isCreatingAccount ? (
+                   <AccountCreationView onCancel={() => setIsCreatingAccount(false)} onSave={(acc) => {
+                     setState(prev => ({ ...prev, accounts: [...prev.accounts, acc], activeAccountId: acc.id }));
+                     setIsCreatingAccount(false);
+                   }} t={t} />
+                 ) : (
+                   <div className="space-y-6">
+                      <div className="flex justify-between items-center mb-2">
+                        <h3 className="text-2xl font-black">{t.accounts}</h3>
+                        <button onClick={() => setIsCreatingAccount(true)} className="p-2 bg-indigo-600 rounded-xl hover:scale-110 transition-transform"><Plus size={18} /></button>
+                      </div>
+                      <div className="space-y-3 max-h-[400px] overflow-y-auto custom-scrollbar">
+                        {state.accounts.map(acc => (
+                          <button 
+                            key={acc.id} 
+                            onClick={() => switchAccount(acc.id)}
+                            className={`w-full flex items-center justify-between p-4 rounded-2xl border transition-all ${state.activeAccountId === acc.id ? 'bg-indigo-600/20 border-indigo-500 text-indigo-400' : 'bg-white/5 border-white/10 hover:border-white/30'}`}
+                          >
+                            <div className="flex items-center gap-3">
+                               <div className="w-10 h-10 rounded-xl bg-indigo-500 text-white flex items-center justify-center font-black">{acc.name[0]}</div>
+                               <div className="text-left">
+                                 <p className="font-bold">{acc.name}</p>
+                                 <p className="text-[10px] opacity-60 uppercase font-black">{acc.portfolio.length} Assets</p>
+                               </div>
+                            </div>
+                            {acc.password && <Lock size={12} className="opacity-40" />}
+                            {state.activeAccountId === acc.id && <Check size={16} />}
+                          </button>
+                        ))}
+                      </div>
+                   </div>
+                 )}
+               </div>
+            </div>
+          )}
         </div>
-
-        <main className="flex-1 ml-64 p-10 min-h-screen relative overflow-x-hidden">
-          <Routes>
-            <Route path="/" element={<DashboardView state={state} setState={setState} prices={prices} activeAccount={activeAccount} />} />
-            <Route path="/portfolio" element={<PortfolioView state={state} setState={setState} prices={prices} activeAccount={activeAccount} />} />
-            <Route path="/settings" element={<SettingsView state={state} setState={setState} activeAccount={activeAccount} />} />
-          </Routes>
-        </main>
-
-        {isAccountModalOpen && (
-          <div className="fixed inset-0 bg-black/90 backdrop-blur-xl z-[100] flex items-center justify-center p-6">
-             <div className="glass-effect p-10 rounded-[2.5rem] w-full max-w-lg border border-white/10 relative">
-               <button onClick={() => setIsAccountModalOpen(false)} className="absolute top-8 right-8 text-gray-500 hover:text-white"><X size={24} /></button>
-               
-               {pendingAccountId ? (
-                 <div className="space-y-6 animate-in zoom-in-95 duration-200">
-                    <div className="text-center">
-                      <div className="w-16 h-16 bg-indigo-500/20 text-indigo-400 rounded-3xl flex items-center justify-center mx-auto mb-4"><Lock size={32} /></div>
-                      <h3 className="text-2xl font-black">{t.unlock}</h3>
-                      <p className="text-gray-500 text-sm mt-1">{t.enterPassword}</p>
-                    </div>
-                    <input 
-                      autoFocus
-                      type="password" 
-                      className={`w-full bg-white/5 border p-4 rounded-2xl outline-none text-center text-xl font-mono ${unlockError ? 'border-red-500 animate-shake' : 'border-white/10'}`}
-                      value={unlockPassword}
-                      onChange={e => { setUnlockPassword(e.target.value); setUnlockError(false); }}
-                      onKeyDown={e => e.key === 'Enter' && handleUnlock()}
-                    />
-                    <button onClick={handleUnlock} className="w-full bg-indigo-600 py-4 rounded-2xl font-black text-lg">解鎖並切換</button>
-                 </div>
-               ) : isCreatingAccount ? (
-                 <AccountCreationView onCancel={() => setIsCreatingAccount(false)} onSave={(acc) => {
-                   setState(prev => ({ ...prev, accounts: [...prev.accounts, acc], activeAccountId: acc.id }));
-                   setIsCreatingAccount(false);
-                 }} t={t} />
-               ) : (
-                 <div className="space-y-6">
-                    <div className="flex justify-between items-center mb-2">
-                      <h3 className="text-2xl font-black">{t.accounts}</h3>
-                      <button onClick={() => setIsCreatingAccount(true)} className="p-2 bg-indigo-600 rounded-xl hover:scale-110 transition-transform"><Plus size={18} /></button>
-                    </div>
-                    <div className="space-y-3 max-h-[400px] overflow-y-auto custom-scrollbar">
-                      {state.accounts.map(acc => (
-                        <button 
-                          key={acc.id} 
-                          onClick={() => switchAccount(acc.id)}
-                          className={`w-full flex items-center justify-between p-4 rounded-2xl border transition-all ${state.activeAccountId === acc.id ? 'bg-indigo-600/20 border-indigo-500 text-indigo-400' : 'bg-white/5 border-white/10 hover:border-white/30'}`}
-                        >
-                          <div className="flex items-center gap-3">
-                             <div className="w-10 h-10 rounded-xl bg-indigo-500 text-white flex items-center justify-center font-black">{acc.name[0]}</div>
-                             <div className="text-left">
-                               <p className="font-bold">{acc.name}</p>
-                               <p className="text-[10px] opacity-60 uppercase font-black">{acc.portfolio.length} Assets</p>
-                             </div>
-                          </div>
-                          {acc.password && <Lock size={12} className="opacity-40" />}
-                          {state.activeAccountId === acc.id && <Check size={16} />}
-                        </button>
-                      ))}
-                    </div>
-                 </div>
-               )}
-             </div>
-          </div>
-        )}
-      </div>
+      </MasterGatekeeper>
     </HashRouter>
   );
 };
@@ -461,7 +534,6 @@ const PortfolioView = memo(({ state, activeAccount, prices, setState }: any) => 
   const t = TRANSLATIONS[activeAccount.language];
   const rate = EXCHANGE_RATES[activeAccount.currency];
 
-  // Modified aggregated to automatically sort by profit descending
   const aggregated = useMemo(() => {
     const map: Record<string, { totalQty: number, totalCost: number, market: AssetMarket }> = {};
     activeAccount.portfolio.forEach((p: any) => {
@@ -478,13 +550,11 @@ const PortfolioView = memo(({ state, activeAccount, prices, setState }: any) => 
         avgCost: data.totalCost / data.totalQty,
         totalQty: data.totalQty,
         market: data.market,
-        profit // Added profit to items for sorting
+        profit 
       };
     });
 
-    // Auto-sort: Highest Profit (Earned most) or Least Loss at the top
     items.sort((a, b) => b.profit - a.profit);
-
     return items;
   }, [activeAccount.portfolio, prices]);
 
@@ -504,15 +574,15 @@ const PortfolioView = memo(({ state, activeAccount, prices, setState }: any) => 
   const runAi = async (symbol: string) => {
     setLoadingAi(true);
     try {
+      // @google/genai coding guidelines: Initialize instance right before use and use correct model for complex tasks
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const prompt = `你是一位頂級分析師。針對 ${symbol} 進行深度分析。參考幣別：${activeAccount.currency}。目前大概價位：${prices[symbol]?.price || '未知'}。請提供繁體中文專業建議：1. 市場情緒 2. 技術面 3. 操作策略。`;
-      const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt });
+      const response = await ai.models.generateContent({ model: 'gemini-3-pro-preview', contents: prompt });
       setAiAnalysis({ symbol, content: response.text });
     } catch (e) { setAiAnalysis({ symbol, content: 'AI 分析暫時不可用。' }); }
     finally { setLoadingAi(false); }
   };
 
-  // 拖拽處理邏輯 (雖然現在是自動排序，但保留 UI 交互)
   const handleDragStart = (symbol: string) => {
     setDraggedSymbol(symbol);
   };
@@ -534,9 +604,7 @@ const PortfolioView = memo(({ state, activeAccount, prices, setState }: any) => 
           <p className="text-xs text-gray-600 font-black uppercase tracking-[0.2em]">{activeAccount.name} Assets</p>
         </div>
         
-        {/* 帳戶總統計區塊 (盈虧顯示與 ROI) */}
         <div className="flex items-center gap-6 glass-effect p-6 rounded-[2rem] border border-white/5 shadow-2xl">
-           {/* ROI% */}
            <div className="min-w-[100px]">
               <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mb-1">ACCOUNT ROI%</p>
               <div className={`text-2xl font-black tracking-tighter flex items-center gap-2 ${totalAccountSummary.roi >= 0 ? 'text-green-400' : 'text-red-400'}`}>
@@ -547,7 +615,6 @@ const PortfolioView = memo(({ state, activeAccount, prices, setState }: any) => 
 
            <div className="w-px h-10 bg-white/10 mx-2"></div>
 
-           {/* 已賺/虧金額 (根據您的構思與截圖加入) */}
            <div className="min-w-[120px]">
               <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mb-1">{t.totalProfit}</p>
               <div className={`text-2xl font-black tracking-tighter font-mono ${totalAccountSummary.profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
@@ -557,7 +624,6 @@ const PortfolioView = memo(({ state, activeAccount, prices, setState }: any) => 
 
            <div className="w-px h-10 bg-white/10 mx-2"></div>
 
-           {/* 總資產 */}
            <div className="min-w-[140px]">
               <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mb-1">{t.totalValue}</p>
               <div className="text-2xl font-black font-mono tracking-tighter">
@@ -765,6 +831,15 @@ const SettingsView = memo(({ state, activeAccount, setState }: any) => {
           </select>
         </div>
         <div className="pt-6 border-t border-white/5">
+           <button 
+             onClick={() => {
+               localStorage.removeItem('wealthwise_unlocked');
+               window.location.reload();
+             }}
+             className="text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-2 transition-colors mb-4"
+           >
+             <Lock size={16} /> Logout and Lock App
+           </button>
            <button onClick={() => {
              if (confirm('確定要刪除此帳戶嗎？此操作無法恢復。')) {
                setState((prev: any) => {
